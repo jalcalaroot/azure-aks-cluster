@@ -9,9 +9,9 @@ plugin "terraform" {
   preset  = "recommended"
 }
 
-# Deshabilitada a proposito: este proyecto es POC desechable por diseño
-# (sin prevent_destroy en ningun lado) - el cluster, el Application Gateway
-# placeholder y el ACR deben poder destruirse limpio con `terraform destroy`.
+# Deshabilitada a proposito: sin prevent_destroy en ningun lado - el cluster,
+# el Application Gateway placeholder y el ACR deben poder destruirse limpio
+# con `terraform destroy`.
 rule "azurerm_resources_missing_prevent_destroy" {
   enabled = false
 }

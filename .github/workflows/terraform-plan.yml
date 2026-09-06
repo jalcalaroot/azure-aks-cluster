@@ -20,7 +20,7 @@ concurrency:
 # (Settings > Secrets and variables > Actions > Variables) - no son
 # secretos, son config especifica de este ambiente. Ver README.
 env:
-  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID_PLAN }} # client_id de aks-containers-poc-plan (ver ci_identities.tf)
+  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID_PLAN }} # client_id de aks-cluster-plan (ver ci_identities.tf)
   ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
   TF_VAR_subscription_id: ${{ vars.ARM_SUBSCRIPTION_ID }}
@@ -43,7 +43,7 @@ jobs:
 
       # El provider "acme" (challenge DNS-01, ver acme.tf) no comparte la
       # resolucion OIDC interna de azurerm - necesita este login propio.
-      # Ver azure-container-apps-poc/CLAUDE.md para el detalle completo.
+      # Ver azure-container-apps/CLAUDE.md para el detalle completo.
       - name: Azure login (OIDC)
         uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:

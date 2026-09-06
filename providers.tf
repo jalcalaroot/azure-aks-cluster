@@ -36,7 +36,7 @@ provider "azurerm" {
 }
 
 # El challenge DNS-01 (ver acme.tf) usa por defecto las mismas credenciales
-# de `az login` que ya usa azurerm - ver azure-container-apps-poc/CLAUDE.md
+# de `az login` que ya usa azurerm - ver azure-container-apps/CLAUDE.md
 # para el detalle, mismo mecanismo acá.
 provider "acme" {
   server_url = var.acme_server_url

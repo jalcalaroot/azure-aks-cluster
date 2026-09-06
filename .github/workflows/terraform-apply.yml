@@ -8,7 +8,7 @@ on:
       - ".github/workflows/terraform-apply.yml"
   schedule:
     # Semanal (lunes 06:00 UTC) - renueva el certificado Let's Encrypt.
-    # OJO: a diferencia de azure-container-apps-poc, renovar el cert aca NO
+    # OJO: a diferencia de azure-container-apps, renovar el cert aca NO
     # alcanza solo con el apply - el Kubernetes Secret con el cert viejo
     # sigue vigente hasta que alguien corra `kubectl create secret tls ...`
     # de nuevo a mano (ver CLAUDE.md). Este schedule renueva el certificado
@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID_AGENT }} # client_id de aks-containers-poc-agent (ver ci_identities.tf)
+  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID_AGENT }} # client_id de aks-cluster-agent (ver ci_identities.tf)
   ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
   TF_VAR_subscription_id: ${{ vars.ARM_SUBSCRIPTION_ID }}
