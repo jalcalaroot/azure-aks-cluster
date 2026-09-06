@@ -92,9 +92,9 @@ variable "default_node_pool_vm_size" {
 }
 
 variable "default_node_pool_node_count" {
-  description = "Cantidad de nodos reales. 1 alcanza para una POC (sin autoscaling, sin HA multi-zona)."
+  description = "Cantidad de nodos reales que hostean los componentes de sistema (CoreDNS, kube-proxy, CSI drivers, Azure CNS, AGIC, ACI connector) - estos NO pueden correr en Virtual Nodes porque necesitan hostNetwork/acceso al host, algo que ACI no provee. 2 (no 3) porque la suscripcion tiene solo 4 vCPU de cuota TOTAL en la region - a 2 vCPU por nodo, 2 nodos es el maximo posible sin pedir un aumento de cuota a Azure."
   type        = number
-  default     = 1
+  default     = 2
 }
 
 # ============================================================================

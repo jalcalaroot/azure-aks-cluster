@@ -28,15 +28,26 @@ spec:
           operator: Exists
         - key: azure.com/aci
           effect: NoSchedule
+      # Virtual Nodes NO hereda el AcrPull del kubelet_identity (eso solo
+      # aplica al nodo real) - el ACI Connector crea el container group con
+      # sus propias credenciales, sin identidad administrada para el pull.
+      # Se necesita un secret explicito. Ver README para como generarlo
+      # (az acr token create, scope-map _repositories_pull).
+      imagePullSecrets:
+        - name: acr-pull-secret
       containers:
         - name: hello-world
           image: <ACR_LOGIN_SERVER>/hello-world:latest
           ports:
             - containerPort: 80
+          # ACI (Virtual Nodes) no tiene overcommit - requests y limits tienen
+          # que ser identicos, si no falla con
+          # ContainerLimitGreaterThanContainerGroupTotalRequest al crear el
+          # container group.
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 250m
+              memory: 256Mi
             limits:
               cpu: 250m
               memory: 256Mi

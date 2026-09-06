@@ -55,6 +55,13 @@ resource "azurerm_kubernetes_cluster" "this" {
     # Sin network_plugin_mode: flat, no overlay (ver comentario arriba).
     # Sin pod_cidr: en modo flat los pods toman IP directo del subnet del
     # nodo (snet-aks) - pod_cidr solo aplica a kubenet/overlay.
+    # service_cidr/dns_service_ip: el default de AKS es 10.0.0.0/16, que
+    # colisiona con la VNet compartida (vnet-jalcalaroot, tambien 10.0.0.0/16)
+    # - "ServiceCidrOverlapExistingSubnetsCidr" al aplicar sin esto. El
+    # service CIDR es puramente virtual (nunca se rutea en la VNet), asi que
+    # cualquier rango fuera de 10.0.0.0/16 sirve.
+    service_cidr   = "172.16.0.0/16"
+    dns_service_ip = "172.16.0.10"
   }
 
   # Virtual Nodes (ACI-backed) - el homologo de un Fargate Profile de EKS.
@@ -91,4 +98,42 @@ locals {
     split("/", var.network_aks_virtual_nodes_subnet_id),
     length(split("/", var.network_aks_virtual_nodes_subnet_id)) - 1
   )
+}
+
+# AKS crea automaticamente las managed identities de los addons (ACI
+# Connector, AGIC), pero NO les da ningun permiso sobre los recursos que
+# necesitan gestionar - eso es responsabilidad de quien despliega, confirmado
+# empiricamente con "bring your own" Application Gateway/subnet (ambos
+# fallaron en runtime con AuthorizationFailed hasta agregar esto a mano).
+
+# ACI Connector necesita leer y unirse al subnet delegado. Como el subnet
+# vive en otro resource group (jalcalaroot, no rg-aks-containers-poc), el fix
+# tiene que ser explicito aca.
+resource "azurerm_role_assignment" "aci_connector_virtual_nodes_subnet" {
+  scope                = var.network_aks_virtual_nodes_subnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.this.aci_connector_linux[0].connector_identity[0].object_id
+}
+
+# AGIC necesita Contributor sobre el Application Gateway (para reconfigurar
+# listeners/reglas/backends) y Reader sobre su resource group.
+resource "azurerm_role_assignment" "agic_app_gateway_contributor" {
+  scope                = azurerm_application_gateway.this.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_kubernetes_cluster.this.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+}
+
+resource "azurerm_role_assignment" "agic_resource_group_reader" {
+  scope                = azurerm_resource_group.this.id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_kubernetes_cluster.this.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+}
+
+# AGIC tambien necesita join/action sobre el subnet del Application Gateway
+# para poder reconfigurar el gateway - mismo motivo cross-resource-group que
+# el subnet de virtual nodes arriba (ApplicationGatewayInsufficientPermissionOnSubnet).
+resource "azurerm_role_assignment" "agic_appgw_subnet_network_contributor" {
+  scope                = var.network_appgw_subnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.this.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
 }

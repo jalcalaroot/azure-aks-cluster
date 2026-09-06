@@ -87,14 +87,21 @@ terraform apply \
    kubectl create secret tls hello-world-tls --cert=/tmp/tls.crt --key=/tmp/tls.key
    rm /tmp/tls.crt /tmp/tls.key
    ```
-4. **Apply the manifests** (substitute the placeholders first):
+4. **Create an ACR pull secret for the Virtual Node.** Unlike the real node pool (which pulls via the kubelet identity's `AcrPull` role), the ACI Connector creates its container groups without any managed identity for registry auth — pulling the image fails with `InaccessibleImage` without this:
+   ```bash
+   TOKEN_PASSWORD=$(az acr token create --name aci-pull-token --registry "${ACR%%.*}" \
+     --scope-map _repositories_pull --query "credentials.passwords[0].value" -o tsv)
+   kubectl create secret docker-registry acr-pull-secret \
+     --docker-server="$ACR" --docker-username=aci-pull-token --docker-password="$TOKEN_PASSWORD"
+   ```
+5. **Apply the manifests** (substitute the placeholders first):
    ```bash
    FQDN=$(terraform output -raw fqdn)
    sed -i "s|<ACR_LOGIN_SERVER>|$ACR|" k8s/deployment.yaml
    sed -i "s|<FQDN>|$FQDN|g" k8s/ingress.yaml
    kubectl apply -f k8s/
    ```
-5. Wait a few minutes for AGIC to reconfigure the Application Gateway, then visit `https://$FQDN`.
+6. Wait a few minutes for AGIC to reconfigure the Application Gateway, then visit `https://$FQDN`.
 
 ```bash
 kubectl delete -f k8s/
