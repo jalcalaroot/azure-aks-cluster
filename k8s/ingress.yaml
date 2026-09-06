@@ -7,12 +7,18 @@ kind: Ingress
 metadata:
   name: hello-world
   annotations:
-    kubernetes.io/ingress.class: azure-application-gateway
     # Redirige HTTP -> HTTPS automaticamente, mismo comportamiento que el
     # redirect_configuration que armamos a mano ayer en el POC de
     # Container Apps - acá lo hace AGIC solo, via annotation.
     appgw.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
+  # spec.ingressClassName (no la annotation kubernetes.io/ingress.class,
+  # deprecada) - referencia el objeto IngressClass "azure-application-gateway"
+  # que crea el addon AGIC. Con la annotation puesta al nombre del
+  # IngressClass en vez del identificador del controller, AGIC generaba solo
+  # su config default/catch-all vacia (sin hostname ni backend) - nunca
+  # procesaba este Ingress.
+  ingressClassName: azure-application-gateway
   tls:
     - hosts:
         - <FQDN>
