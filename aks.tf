@@ -5,19 +5,19 @@
 # overlay separado - por eso snet-aks-virtual-nodes esta sizeado como /24
 # completo en vez de algo mas chico.
 resource "azurerm_kubernetes_cluster" "this" {
-  #checkov:skip=CKV_AZURE_171:sin canal de auto-upgrade a proposito - POC de corta vida, no gestion continua
-  #checkov:skip=CKV_AZURE_172:no usamos Secrets Store CSI Driver en esta POC - el cert va directo a un Kubernetes Secret (ver acme.tf)
+  #checkov:skip=CKV_AZURE_171:sin canal de auto-upgrade a proposito - cluster de corta vida, sin gestion continua de versiones
+  #checkov:skip=CKV_AZURE_172:no usamos Secrets Store CSI Driver en este proyecto - el cert va directo a un Kubernetes Secret (ver acme.tf)
   #checkov:skip=CKV_AZURE_232:only_critical_addons_enabled rompe AGIC (bug conocido: el pod de AGIC no arranca) - no lo activamos a proposito
   #checkov:skip=CKV_AZURE_7:sin Network Policy - una sola app en el cluster, no hay nada que segmentar
   #checkov:skip=CKV_AZURE_168:umbral de 50 pods/nodo no aplica a un cluster de 1 nodo con un solo hello-world
-  #checkov:skip=CKV_AZURE_141:deshabilitar cuentas locales requiere Azure AD RBAC integration - sin eso configurado, perderiamos acceso via kubectl. Complejidad no justificada en esta POC
-  #checkov:skip=CKV_AZURE_170:Free SKU a proposito - sin SLA pago, no justificado el costo para una POC (ver variables.tf)
+  #checkov:skip=CKV_AZURE_141:deshabilitar cuentas locales requiere Azure AD RBAC integration - sin eso configurado, perderiamos acceso via kubectl. Complejidad no justificada en este proyecto
+  #checkov:skip=CKV_AZURE_170:Free SKU a proposito - sin SLA pago, no justificado el costo para este proyecto (ver variables.tf)
   #checkov:skip=CKV_AZURE_226:no elegimos ephemeral OS disk a proposito - simplicidad, sin datos persistentes que proteger en el hello-world
   #checkov:skip=CKV_AZURE_227:mismo motivo que arriba
-  #checkov:skip=CKV_AZURE_115:cluster publico a proposito - simplifica el acceso a kubectl para una POC, no apto para produccion
-  #checkov:skip=CKV_AZURE_6:sin restriccion de IPs al API server - simplifica el acceso para una POC
-  #checkov:skip=CKV_AZURE_117:disk encryption set con customer-managed key no justificado - sin datos sensibles en esta POC
-  #checkov:skip=CKV_AZURE_116:Azure Policy add-on es gobernanza a nivel organizacion - no aplica a una POC de un solo cluster
+  #checkov:skip=CKV_AZURE_115:cluster publico a proposito - simplifica el acceso a kubectl, no apto para produccion
+  #checkov:skip=CKV_AZURE_6:sin restriccion de IPs al API server - simplifica el acceso
+  #checkov:skip=CKV_AZURE_117:disk encryption set con customer-managed key no justificado - sin datos sensibles en este proyecto
+  #checkov:skip=CKV_AZURE_116:Azure Policy add-on es gobernanza a nivel organizacion - no aplica a un solo cluster
   name                = var.cluster_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
@@ -43,7 +43,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   # Requerido explicitamente por azurerm >= 5.x. mode = "Manual" = sin Node
-  # Autoprovisioning (Karpenter) - decidimos no usarlo para esta POC (ver
+  # Autoprovisioning (Karpenter) - decidimos no usarlo en este proyecto (ver
   # CLAUDE.md), el unico node pool real es fijo y chico.
   node_provisioning_profile {
     mode = "Manual"
@@ -83,7 +83,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   # Container Insights, reutilizando el Log Analytics Workspace compartido -
-  # mismo patron que azure-container-apps-poc.
+  # mismo patron que azure-container-apps.
   oms_agent {
     log_analytics_workspace_id = var.network_log_analytics_workspace_id
   }
@@ -107,7 +107,7 @@ locals {
 # fallaron en runtime con AuthorizationFailed hasta agregar esto a mano).
 
 # ACI Connector necesita leer y unirse al subnet delegado. Como el subnet
-# vive en otro resource group (jalcalaroot, no rg-aks-containers-poc), el fix
+# vive en otro resource group (jalcalaroot, no rg-aks-cluster), el fix
 # tiene que ser explicito aca.
 resource "azurerm_role_assignment" "aci_connector_virtual_nodes_subnet" {
   scope                = var.network_aks_virtual_nodes_subnet_id

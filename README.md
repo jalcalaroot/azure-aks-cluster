@@ -1,4 +1,4 @@
-# Azure AKS Containers POC
+# Azure AKS Cluster
 
 A hello-world container served over HTTPS on a custom domain, running on **Azure Kubernetes Service (AKS)**, scheduled on a **Virtual Node** (ACI-backed — the AKS equivalent of an EKS Fargate profile, no VM behind the pod), exposed via **AGIC** (Application Gateway Ingress Controller) with a **Let's Encrypt** certificate.
 
@@ -20,29 +20,30 @@ A hello-world container served over HTTPS on a custom domain, running on **Azure
 
 Application Gateway is the only public entry point. The hello-world pod runs on a Virtual Node — no VM behind it, billed per second, scheduled there via `nodeSelector`/`tolerations` (see `k8s/deployment.yaml`), same mechanism an EKS Fargate profile uses to claim pods by selector.
 
-This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspace — it does not create any of them.
+This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspace provisioned by a sibling network project; it does not create its own virtual network. Design rationale and implementation notes live in [CLAUDE.md](CLAUDE.md).
 
 ## Resources deployed
 
 | Resource | Purpose | Docs |
 |---|---|---|
-| Resource Group | Container for everything below | [Manage resource groups](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-portal) |
-| AKS cluster | 1 real node (system components) + Virtual Nodes add-on for the actual workload | [AKS overview](https://learn.microsoft.com/en-us/azure/aks/what-is-aks) |
+| Resource Group | Container for everything below, own lifecycle | [Manage resource groups](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-portal) |
+| AKS cluster | One real node (system components) plus the Virtual Nodes add-on for the actual workload | [AKS overview](https://learn.microsoft.com/en-us/azure/aks/what-is-aks) |
 | Virtual Nodes (ACI connector) | Runs the hello-world pod as an ACI container group, no VM | [Virtual nodes](https://learn.microsoft.com/en-us/azure/aks/virtual-nodes) |
-| Azure Container Registry (Basic) | Hosts the `hello-world` image; admin disabled, cluster pulls via its kubelet identity | [ACR overview](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-intro) |
+| Azure Container Registry (Basic) | Hosts the `hello-world` image; admin user disabled | [ACR overview](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-intro) |
 | Application Gateway (Standard_v2) + AGIC | Public entry point; AGIC reconfigures it automatically from Kubernetes `Ingress` resources | [AGIC overview](https://learn.microsoft.com/en-us/azure/application-gateway/ingress-controller-overview) |
 | Public IP (Standard) | Attached to the Application Gateway | [Public IP addresses](https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-addresses) |
 | Azure DNS Zone (existing, not created here) | Hosts the `A` record for the public hostname | [Azure DNS overview](https://learn.microsoft.com/en-us/azure/dns/dns-overview) |
 | Let's Encrypt certificate (via ACME DNS-01) | Issued through the [`vancluever/acme`](https://registry.terraform.io/providers/vancluever/acme/latest/docs) Terraform provider, delivered to the cluster as a Kubernetes TLS Secret | [Let's Encrypt](https://letsencrypt.org/how-it-works/) |
+| User Assigned Managed Identities (x2) | CI/CD identities for GitHub Actions, federated via OIDC — no stored secrets | [Managed identities overview](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/overview) |
 | Container Insights (`oms_agent`) | AKS-specific monitoring, forwarded to an existing Log Analytics Workspace | [Container insights](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview) |
 
 ## Design notes
 
 - **Virtual Nodes, not a standard node pool, for the workload.** This is the direct AKS analog of an EKS Fargate profile — the pod is claimed by a `nodeSelector`/`toleration` (`k8s/deployment.yaml`), same idea as a Fargate profile claiming pods by namespace/label selector.
 - **Azure CNI flat networking, not Overlay.** Virtual Nodes isn't compatible with Azure CNI Overlay (confirmed against Microsoft's own docs: overlay is for when you *don't* need advanced features like virtual nodes). This means every pod — on the real node and on Virtual Nodes — gets a real, routable VNet IP, which is why `snet-aks-virtual-nodes` is a full `/24` rather than something smaller.
-- **No Key Vault in this design**, unlike the Container Apps POC. AGIC doesn't read certificates from Key Vault the way a standalone Application Gateway does — it picks them up from a Kubernetes `Secret` referenced in the `Ingress` resource's `tls:` section. One less moving part.
-- **The Application Gateway is "bring your own."** We create a minimal placeholder (required by Terraform to create the resource at all) and hand its ID to AGIC via `ingress_application_gateway.gateway_id`. AGIC then reconfigures the real listeners/backend pools/rules based on Kubernetes `Ingress` objects — `lifecycle.ignore_changes` on the Terraform resource stops `terraform apply` from fighting AGIC over those blocks afterward.
-- **Kubernetes manifests are plain YAML, not Terraform-managed.** Consistent with how the Container Apps POC treats the Docker image (build/push is a manual step, not a Terraform resource) — `kubectl apply` is a separate, documented step after `terraform apply` creates the cluster.
+- **No Key Vault in this design.** AGIC doesn't read certificates from Key Vault the way a standalone Application Gateway does — it picks them up from a Kubernetes `Secret` referenced in the `Ingress` resource's `tls:` section. One less moving part.
+- **The Application Gateway is "bring your own."** Terraform creates a minimal placeholder (required to create the resource at all) and hands its ID to AGIC via `ingress_application_gateway.gateway_id`. AGIC then reconfigures the real listeners/backend pools/rules based on Kubernetes `Ingress` objects — `lifecycle.ignore_changes` on the Terraform resource stops `terraform apply` from fighting AGIC over those blocks afterward.
+- **Kubernetes manifests are plain YAML, not Terraform-managed.** Terraform's job is the infrastructure, not the application — `kubectl apply` is a separate, documented step after `terraform apply` creates the cluster.
 
 ## Prerequisites
 
@@ -119,9 +120,10 @@ Renewing the certificate and Let's Encrypt rate limits: see [CLAUDE.md](CLAUDE.m
 | `owner` | — | for resource tags |
 | `location` | `eastus` | must match your VNet's region |
 | `network_aks_subnet_id` / `network_aks_virtual_nodes_subnet_id` / `network_appgw_subnet_id` / `network_log_analytics_workspace_id` | — | from your network project |
-| `acr_name` | `acrakscontainerspoc` | globally unique |
+| `acr_name` | `acrakscluster` | globally unique |
 | `sku_tier` | `Free` | AKS control plane SKU |
-| `default_node_pool_vm_size` | `Standard_D2s_v5` | the one real node, hosts system components only |
+| `default_node_pool_vm_size` | `Standard_D2s_v7` | hosts system components only; the workload runs on the Virtual Node |
+| `default_node_pool_node_count` | `2` | tune to your subscription's regional vCPU quota |
 | `dns_zone_name` / `dns_zone_resource_group_name` | `azure.jalcalaroot.com` / `jalcalaroot` | must already exist |
 | `dns_record_name` | `aks` | final FQDN = `<dns_record_name>.<dns_zone_name>` |
 | `acme_server_url` | Let's Encrypt production | use staging while iterating |
@@ -139,23 +141,23 @@ Renewing the certificate and Let's Encrypt rate limits: see [CLAUDE.md](CLAUDE.m
 
 ## CI/CD
 
-GitHub Actions, authenticated to Azure via OIDC (Workload Identity Federation) — no secrets or static credentials stored in GitHub, same pattern as `azure-container-apps-poc`.
+GitHub Actions, authenticated to Azure via OIDC (Workload Identity Federation) — no secrets or static credentials stored in GitHub.
 
 | Workflow | Trigger | Identity | What it does |
 |---|---|---|---|
-| `terraform-plan.yml` | Pull request | `aks-containers-poc-plan` (read-only) | `fmt -check`, `validate`, tflint, Checkov (blocking), `plan`, posts the plan as a PR comment |
-| `terraform-apply.yml` | Push to `main`, and weekly on a schedule | `aks-containers-poc-agent` (scoped to this project's resources only) | `plan` + `apply` |
+| `terraform-plan.yml` | Pull request | `aks-cluster-plan` (read-only) | `fmt -check`, `validate`, tflint, Checkov (blocking), `plan`, posts the plan as a PR comment |
+| `terraform-apply.yml` | Push to `main`, and weekly on a schedule | `aks-cluster-agent` (scoped to this project's resources only) | `plan` + `apply` |
 | `gitleaks.yml` | PR / push to `main` | — | Secret scanning |
 
-**The weekly schedule only renews the certificate in Let's Encrypt — it does not update the cluster.** Unlike the Container Apps POC, the cert isn't read live by anything; it's baked into a Kubernetes Secret that a human created once via `kubectl`. After a renewal, re-run the `kubectl create secret tls ... --dry-run=client -o yaml | kubectl apply -f -` step manually (see CLAUDE.md) for AGIC to actually pick up the new certificate.
+**The weekly schedule only renews the certificate in Let's Encrypt — it does not update the cluster.** The cert isn't read live by anything; it's baked into a Kubernetes Secret that a human created once via `kubectl`. After a renewal, re-run the `kubectl create secret tls ... --dry-run=client -o yaml | kubectl apply -f -` step manually (see CLAUDE.md) for AGIC to actually pick up the new certificate.
 
-Both identities are scoped resource-by-resource, same philosophy as `azure-container-apps-poc` — see CLAUDE.md for the full RBAC breakdown, including a permission gap (`Role Based Access Control Administrator` on the ACR) that doesn't show up in the Container Apps POC but is required here for the agent to grant `AcrPull` to the cluster's kubelet identity.
+Both identities are scoped resource-by-resource, never blanket `Contributor` over a shared resource group — see CLAUDE.md for the full RBAC breakdown, including a permission gap (`Role Based Access Control Administrator` on the ACR) required for the agent to grant `AcrPull` to the cluster's kubelet identity.
 
 Required GitHub repository variables (Settings → Secrets and variables → Actions → Variables): `ARM_CLIENT_ID_AGENT`, `ARM_CLIENT_ID_PLAN`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `OWNER`, `NETWORK_AKS_SUBNET_ID`, `NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID`, `NETWORK_APPGW_SUBNET_ID`, `NETWORK_LOG_ANALYTICS_WORKSPACE_ID`. Plus the `ACME_EMAIL` secret.
 
 ## Cost
 
-Main ongoing costs: AKS control plane (free on the Free SKU), the one real VM node, Virtual Nodes (billed per second the pod actually runs, effectively free at hello-world scale), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
+Main ongoing costs: AKS control plane (free on the Free SKU), the real node(s), Virtual Nodes (billed per second the pod actually runs, effectively free at hello-world scale), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
 
 ## Not covered
 

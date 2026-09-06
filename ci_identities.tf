@@ -1,6 +1,6 @@
 # Identidades de CI para GitHub Actions vía OIDC (Workload Identity
 # Federation) - sin ningun secreto de Azure almacenado en GitHub. Mismo
-# patron que azure-container-apps-poc: "agent" (apply, push+schedule a
+# patron que azure-container-apps: "agent" (apply, push+schedule a
 # main) y "plan" (solo lectura, PRs), con RBAC acotado recurso por recurso
 # en vez de Contributor sobre un resource group compartido.
 data "azurerm_storage_account" "tfstate" {
@@ -9,27 +9,27 @@ data "azurerm_storage_account" "tfstate" {
 }
 
 resource "azurerm_user_assigned_identity" "ci_agent" {
-  name                = "aks-containers-poc-agent"
+  name                = "aks-cluster-agent"
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
   tags                = local.tags
 }
 
 resource "azurerm_user_assigned_identity" "ci_plan" {
-  name                = "aks-containers-poc-plan"
+  name                = "aks-cluster-plan"
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
   tags                = local.tags
 }
 
 # Subject claims segun el formato ACTUAL de GitHub para este repo
-# (confirmado via `gh api repos/jalcalaroot/azure-aks-containers-poc/actions/oidc/customization/sub`).
+# (confirmado via `gh api repos/jalcalaroot/azure-aks-cluster/actions/oidc/customization/sub`).
 resource "azurerm_federated_identity_credential" "ci_agent_main" {
   name                      = "github-main"
   user_assigned_identity_id = azurerm_user_assigned_identity.ci_agent.id
   issuer                    = "https://token.actions.githubusercontent.com"
   audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "repo:jalcalaroot@22682982/azure-aks-containers-poc@1359405750:ref:refs/heads/main"
+  subject                   = "repo:jalcalaroot@22682982/azure-aks-cluster@1359405750:ref:refs/heads/main"
 }
 
 resource "azurerm_federated_identity_credential" "ci_plan_pr" {
@@ -37,7 +37,7 @@ resource "azurerm_federated_identity_credential" "ci_plan_pr" {
   user_assigned_identity_id = azurerm_user_assigned_identity.ci_plan.id
   issuer                    = "https://token.actions.githubusercontent.com"
   audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "repo:jalcalaroot@22682982/azure-aks-containers-poc@1359405750:pull_request"
+  subject                   = "repo:jalcalaroot@22682982/azure-aks-cluster@1359405750:pull_request"
 }
 
 # --------------------------------------------------------------------------
@@ -104,7 +104,7 @@ resource "azurerm_role_assignment" "ci_agent_appgw_subnet_network_contributor" {
 # Backend remoto: Storage Blob Data Contributor (data plane, lease de
 # locking) + Reader (management plane, para que el data source
 # azurerm_storage_account pueda leer el objeto ARM) - ambos gaps reales que
-# ya pisamos ayer en azure-container-apps-poc.
+# ya pisamos ayer en azure-container-apps.
 resource "azurerm_role_assignment" "ci_agent_state_write" {
   scope                = data.azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"

@@ -20,7 +20,7 @@ resource "azurerm_public_ip" "appgw" {
 resource "azurerm_application_gateway" "this" {
   #checkov:skip=CKV_AZURE_217:el placeholder HTTP es temporal - AGIC reemplaza los listeners al aplicar el primer Ingress
   #checkov:skip=CKV_AZURE_218:idem - configuracion real de TLS la define el Ingress de Kubernetes, no este placeholder
-  #checkov:skip=CKV_AZURE_120:WAF_v2 no justificado por costo en esta POC
+  #checkov:skip=CKV_AZURE_120:WAF_v2 no justificado por costo en este proyecto
   name                = var.app_gateway_name
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location

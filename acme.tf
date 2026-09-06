@@ -1,14 +1,14 @@
 # Certificado Let's Encrypt via DNS-01, mismo mecanismo que
-# azure-container-apps-poc. A diferencia de ese proyecto, ACA NO pasa por
+# azure-container-apps. A diferencia de ese proyecto, ACA NO pasa por
 # Key Vault: AGIC no lee el certificado de un Key Vault como hacia
 # Application Gateway standalone - lo toma de un Kubernetes TLS Secret
 # referenciado en el Ingress (ver k8s/ingress.yaml). Menos piezas moviendose
-# para lo que esta POC necesita.
+# para lo que este proyecto necesita.
 #
 # Usamos common_name (no certificate_request_pem/tls_cert_request) a
 # proposito: certificate_pem/private_key_pem solo vienen poblados cuando
 # acme_certificate genera su propia key - con un CSR externo quedan vacios
-# (gotcha real que ya pisamos en azure-container-apps-poc).
+# (gotcha real que ya pisamos en azure-container-apps).
 resource "tls_private_key" "acme_account" {
   algorithm = "RSA"
   rsa_bits  = 2048

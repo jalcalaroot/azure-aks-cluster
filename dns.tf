@@ -1,4 +1,4 @@
-# Misma zone existente que azure-container-apps-poc (azure.jalcalaroot.com,
+# Misma zone existente que azure-container-apps (azure.jalcalaroot.com,
 # ya delegada) - agregamos el registro "aks" en vez de "container".
 data "azurerm_dns_zone" "this" {
   name                = var.dns_zone_name

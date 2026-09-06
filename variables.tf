@@ -12,12 +12,12 @@ variable "location" {
 variable "resource_group_name" {
   description = "Resource group dedicado a este proyecto"
   type        = string
-  default     = "rg-aks-containers-poc"
+  default     = "rg-aks-cluster"
 }
 
 variable "environment" {
   type    = string
-  default = "poc"
+  default = "dev"
 }
 
 variable "owner" {
@@ -26,7 +26,7 @@ variable "owner" {
 
 variable "project" {
   type    = string
-  default = "aks-containers-poc"
+  default = "aks-cluster"
 }
 
 variable "tags" {
@@ -36,7 +36,7 @@ variable "tags" {
 
 # ============================================================================
 # Red compartida (jalcalaroot-azure-bootstrap) - valores copiados a mano,
-# sin terraform_remote_state, mismo patron que azure-container-apps-poc.
+# sin terraform_remote_state, mismo patron que azure-container-apps.
 # ============================================================================
 
 variable "network_aks_subnet_id" {
@@ -65,12 +65,12 @@ variable "network_log_analytics_workspace_id" {
 
 variable "cluster_name" {
   type    = string
-  default = "aks-containers-poc"
+  default = "aks-cluster"
 }
 
 variable "dns_prefix" {
   type    = string
-  default = "aks-containers-poc"
+  default = "aks-cluster"
 }
 
 variable "kubernetes_version" {
@@ -80,7 +80,7 @@ variable "kubernetes_version" {
 }
 
 variable "sku_tier" {
-  description = "SKU del control plane (Free, Standard, Premium). Free alcanza para una POC."
+  description = "SKU del control plane (Free, Standard, Premium). Free alcanza para este proyecto."
   type        = string
   default     = "Free"
 }
@@ -104,7 +104,7 @@ variable "default_node_pool_node_count" {
 variable "acr_name" {
   description = "Nombre del Azure Container Registry - debe ser unico globalmente"
   type        = string
-  default     = "acrakscontainerspoc"
+  default     = "acrakscluster"
 }
 
 # ============================================================================
@@ -146,7 +146,7 @@ variable "acme_server_url" {
 
 variable "app_gateway_name" {
   type    = string
-  default = "appgw-aks-containers-poc"
+  default = "appgw-aks-cluster"
 }
 
 variable "app_gateway_sku_capacity" {
