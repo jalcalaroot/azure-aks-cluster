@@ -1,0 +1,68 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.tf"
+      - ".github/workflows/terraform-apply.yml"
+  schedule:
+    # Semanal (lunes 06:00 UTC) - renueva el certificado Let's Encrypt.
+    # OJO: a diferencia de azure-container-apps-poc, renovar el cert aca NO
+    # alcanza solo con el apply - el Kubernetes Secret con el cert viejo
+    # sigue vigente hasta que alguien corra `kubectl create secret tls ...`
+    # de nuevo a mano (ver CLAUDE.md). Este schedule renueva el certificado
+    # en Let's Encrypt, no lo actualiza en el cluster.
+    - cron: "0 6 * * 1"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+env:
+  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID_AGENT }} # client_id de aks-containers-poc-agent (ver ci_identities.tf)
+  ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+  TF_VAR_subscription_id: ${{ vars.ARM_SUBSCRIPTION_ID }}
+  TF_VAR_acme_email: ${{ secrets.ACME_EMAIL }}
+  TF_VAR_owner: ${{ vars.OWNER }}
+  TF_VAR_network_aks_subnet_id: ${{ vars.NETWORK_AKS_SUBNET_ID }}
+  TF_VAR_network_aks_virtual_nodes_subnet_id: ${{ vars.NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID }}
+  TF_VAR_network_appgw_subnet_id: ${{ vars.NETWORK_APPGW_SUBNET_ID }}
+  TF_VAR_network_log_analytics_workspace_id: ${{ vars.NETWORK_LOG_ANALYTICS_WORKSPACE_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Azure login (OIDC)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.13"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan

@@ -10,8 +10,6 @@ locals {
   fqdn = "${var.dns_record_name}.${var.dns_zone_name}"
 }
 
-data "azurerm_client_config" "current" {}
-
 resource "azurerm_resource_group" "this" {
   name     = var.resource_group_name
   location = var.location
