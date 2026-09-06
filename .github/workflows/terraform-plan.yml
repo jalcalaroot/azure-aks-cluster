@@ -1,0 +1,160 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "*.tf"
+      - ".github/workflows/terraform-*.yml"
+
+permissions:
+  id-token: write # requerido para autenticar contra Azure vía OIDC
+  contents: read
+  pull-requests: write # para comentar el plan en el PR
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Todos los valores de "vars." son GitHub Actions repository VARIABLES
+# (Settings > Secrets and variables > Actions > Variables) - no son
+# secretos, son config especifica de este ambiente. Ver README.
+env:
+  ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID_PLAN }} # client_id de aks-containers-poc-plan (ver ci_identities.tf)
+  ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+  TF_VAR_subscription_id: ${{ vars.ARM_SUBSCRIPTION_ID }}
+  TF_VAR_acme_email: ${{ secrets.ACME_EMAIL }}
+  TF_VAR_owner: ${{ vars.OWNER }}
+  TF_VAR_network_aks_subnet_id: ${{ vars.NETWORK_AKS_SUBNET_ID }}
+  TF_VAR_network_aks_virtual_nodes_subnet_id: ${{ vars.NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID }}
+  TF_VAR_network_appgw_subnet_id: ${{ vars.NETWORK_APPGW_SUBNET_ID }}
+  TF_VAR_network_log_analytics_workspace_id: ${{ vars.NETWORK_LOG_ANALYTICS_WORKSPACE_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # El provider "acme" (challenge DNS-01, ver acme.tf) no comparte la
+      # resolucion OIDC interna de azurerm - necesita este login propio.
+      # Ver azure-container-apps-poc/CLAUDE.md para el detalle completo.
+      - name: Azure login (OIDC)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~1.13"
+          terraform_wrapper: false
+
+      - name: Terraform fmt (check)
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@1cf010d3c7aef302051ccdb68c14c5dc2efa34ef # v6.3.1
+
+      - name: tflint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init
+          tflint --recursive
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          soft_fail: false
+
+      - name: Terraform plan
+        id: plan
+        shell: bash
+        run: |
+          set +e
+          terraform plan -input=false -no-color -out=tfplan | tee plan_output.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Comentar plan en el PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('plan_output.txt', 'utf8');
+            const truncated = plan.length > 60000
+              ? plan.slice(0, 60000) + '\n\n... (salida truncada)'
+              : plan;
+
+            const summaryMatch = plan.match(/Plan:\s*(\d+)\s*to add,\s*(\d+)\s*to change,\s*(\d+)\s*to destroy/);
+            const destroyCount = summaryMatch ? parseInt(summaryMatch[3], 10) : 0;
+
+            const warning = destroyCount > 0
+              ? [
+                  `> [!WARNING]`,
+                  `> Este plan **destruye o reemplaza ${destroyCount} recurso${destroyCount === 1 ? '' : 's'}**. Revisar con cuidado antes de mergear.`,
+                  '',
+                ]
+              : [];
+
+            const body = [
+              '### Terraform Plan',
+              '',
+              ...warning,
+              '<details><summary>Ver plan</summary>',
+              '',
+              '```',
+              truncated,
+              '```',
+              '',
+              '</details>',
+              '',
+              `*Commit: ${context.sha.substring(0, 7)}*`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const previous = comments.find(
+              (c) => c.user.type === 'Bot' && c.body.startsWith('### Terraform Plan')
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fallar si terraform plan falló
+        if: steps.plan.outputs.exitcode == '1'
+        run: exit 1

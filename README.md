@@ -63,7 +63,6 @@ export TF_VAR_owner="<your-name>"
 
 terraform init
 terraform apply \
-  -var "network_vnet_id=<...>" \
   -var "network_aks_subnet_id=<...>" \
   -var "network_aks_virtual_nodes_subnet_id=<...>" \
   -var "network_appgw_subnet_id=<...>" \
@@ -112,7 +111,7 @@ Renewing the certificate and Let's Encrypt rate limits: see [CLAUDE.md](CLAUDE.m
 | `acme_email` | — | via `TF_VAR_acme_email` |
 | `owner` | — | for resource tags |
 | `location` | `eastus` | must match your VNet's region |
-| `network_vnet_id` / `network_aks_subnet_id` / `network_aks_virtual_nodes_subnet_id` / `network_appgw_subnet_id` / `network_log_analytics_workspace_id` | — | from your network project |
+| `network_aks_subnet_id` / `network_aks_virtual_nodes_subnet_id` / `network_appgw_subnet_id` / `network_log_analytics_workspace_id` | — | from your network project |
 | `acr_name` | `acrakscontainerspoc` | globally unique |
 | `sku_tier` | `Free` | AKS control plane SKU |
 | `default_node_pool_vm_size` | `Standard_D2s_v5` | the one real node, hosts system components only |
@@ -131,10 +130,26 @@ Renewing the certificate and Let's Encrypt rate limits: see [CLAUDE.md](CLAUDE.m
 | `node_resource_group` | AKS-managed `MC_*` resource group |
 | `certificate_pem` / `certificate_private_key_pem` | Sensitive — for creating the Kubernetes TLS Secret |
 
+## CI/CD
+
+GitHub Actions, authenticated to Azure via OIDC (Workload Identity Federation) — no secrets or static credentials stored in GitHub, same pattern as `azure-container-apps-poc`.
+
+| Workflow | Trigger | Identity | What it does |
+|---|---|---|---|
+| `terraform-plan.yml` | Pull request | `aks-containers-poc-plan` (read-only) | `fmt -check`, `validate`, tflint, Checkov (blocking), `plan`, posts the plan as a PR comment |
+| `terraform-apply.yml` | Push to `main`, and weekly on a schedule | `aks-containers-poc-agent` (scoped to this project's resources only) | `plan` + `apply` |
+| `gitleaks.yml` | PR / push to `main` | — | Secret scanning |
+
+**The weekly schedule only renews the certificate in Let's Encrypt — it does not update the cluster.** Unlike the Container Apps POC, the cert isn't read live by anything; it's baked into a Kubernetes Secret that a human created once via `kubectl`. After a renewal, re-run the `kubectl create secret tls ... --dry-run=client -o yaml | kubectl apply -f -` step manually (see CLAUDE.md) for AGIC to actually pick up the new certificate.
+
+Both identities are scoped resource-by-resource, same philosophy as `azure-container-apps-poc` — see CLAUDE.md for the full RBAC breakdown, including a permission gap (`Role Based Access Control Administrator` on the ACR) that doesn't show up in the Container Apps POC but is required here for the agent to grant `AcrPull` to the cluster's kubelet identity.
+
+Required GitHub repository variables (Settings → Secrets and variables → Actions → Variables): `ARM_CLIENT_ID_AGENT`, `ARM_CLIENT_ID_PLAN`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `OWNER`, `NETWORK_AKS_SUBNET_ID`, `NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID`, `NETWORK_APPGW_SUBNET_ID`, `NETWORK_LOG_ANALYTICS_WORKSPACE_ID`. Plus the `ACME_EMAIL` secret.
+
 ## Cost
 
 Main ongoing costs: AKS control plane (free on the Free SKU), the one real VM node, Virtual Nodes (billed per second the pod actually runs, effectively free at hello-world scale), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
 
 ## Not covered
 
-CI/CD automation, WAF on Application Gateway, Azure AD RBAC integration for the cluster, autoscaling, multi-region, network policies.
+WAF on Application Gateway, Azure AD RBAC integration for the cluster, autoscaling, multi-region, network policies, automated cluster-side certificate rotation.

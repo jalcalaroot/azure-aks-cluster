@@ -39,11 +39,6 @@ variable "tags" {
 # sin terraform_remote_state, mismo patron que azure-container-apps-poc.
 # ============================================================================
 
-variable "network_vnet_id" {
-  description = "ID de la VNet compartida (vnet-jalcalaroot)"
-  type        = string
-}
-
 variable "network_aks_subnet_id" {
   description = "ID del subnet snet-aks (node pool real del cluster)"
   type        = string
@@ -91,9 +86,9 @@ variable "sku_tier" {
 }
 
 variable "default_node_pool_vm_size" {
-  description = "SKU de VM para el (unico) nodo real del cluster. El hello-world corre en Virtual Nodes, no aca - este nodo solo hostea componentes de sistema."
+  description = "SKU de VM para el (unico) nodo real del cluster. El hello-world corre en Virtual Nodes, no aca - este nodo solo hostea componentes de sistema. D2s_v5 no esta habilitado en esta suscripcion en eastus (solo v7 y algunas series especificas, confirmado por el error 400 de AKS) - se usa v7."
   type        = string
-  default     = "Standard_D2s_v5"
+  default     = "Standard_D2s_v7"
 }
 
 variable "default_node_pool_node_count" {
@@ -110,16 +105,6 @@ variable "acr_name" {
   description = "Nombre del Azure Container Registry - debe ser unico globalmente"
   type        = string
   default     = "acrakscontainerspoc"
-}
-
-# ============================================================================
-# Aplicacion / imagen
-# ============================================================================
-
-variable "container_image_tag" {
-  description = "Tag de la imagen hello-world en ACR. Debe existir en ACR ANTES de aplicar el Deployment - ver README."
-  type        = string
-  default     = "latest"
 }
 
 # ============================================================================

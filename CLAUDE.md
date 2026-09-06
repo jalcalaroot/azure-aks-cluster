@@ -30,6 +30,15 @@ Same gotcha as every other project here: set via `TF_VAR_subscription_id`, not `
 
 Same limitation as `azure-container-apps-poc`: `acme_certificate` only re-issues within 30 days of expiry, and only when `terraform apply` actually runs — nothing here triggers that on a schedule. After a renewal, the Kubernetes Secret needs to be re-created (`kubectl create secret tls ... --dry-run=client -o yaml | kubectl apply -f -`) for AGIC to pick up the new cert.
 
+## CI/CD
+
+Two dedicated OIDC identities (`ci_identities.tf`), same pattern as `azure-container-apps-poc`: `aks-containers-poc-agent` (apply) and `aks-containers-poc-plan` (read-only). RBAC scoped resource-by-resource, not blanket Contributor over a shared resource group.
+
+- **`Contributor` doesn't include `Microsoft.Authorization/roleAssignments/write`.** The agent needs to create `azurerm_role_assignment.aks_acr_pull` (grants `AcrPull` to the cluster's kubelet identity, in `acr.tf`) - Contributor alone 403s on that. Fixed by granting the agent `Role Based Access Control Administrator` scoped to just the ACR resource (not the whole resource group) - lets it manage role assignments *on that one resource* without broader access. Didn't hit this in `azure-container-apps-poc` because nothing there needed the agent itself to grant a role at apply time.
+- **Same Log Analytics Contributor gap as `azure-container-apps-poc`.** `oms_agent` needs the workspace's shared key (`Microsoft.OperationalInsights/workspaces/sharedKeys/action`), excluded from `Reader` on purpose - needs `Log Analytics Contributor`.
+- **Same Storage Account Reader gap as `azure-container-apps-poc`.** `Storage Blob Data Contributor` is data-plane only; the `data.azurerm_storage_account.tfstate` block needs a management-plane `Reader` too.
+- **The weekly schedule on `terraform-apply.yml` only renews the Let's Encrypt certificate - it does NOT update the cluster.** Unlike the Container Apps POC (where the cert is read live), here the cert is baked into a Kubernetes Secret a human created once. A renewed cert sitting in Terraform state does nothing until someone re-runs the `kubectl create secret tls` step against the live cluster.
+
 ## Consumers
 
 None — this is a leaf project, nothing else reads its outputs.
