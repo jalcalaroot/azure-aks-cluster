@@ -1,0 +1,42 @@
+# Reemplazar <ACR_LOGIN_SERVER> por el valor real de `terraform output -raw
+# acr_login_server` antes de aplicar - ver README.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+  labels:
+    app: hello-world
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      # Fuerza el scheduling en el Virtual Node (ACI-backed) en vez del nodo
+      # real - equivalente a que un Fargate Profile de EKS capture este pod.
+      # Sin esto, el scheduler lo pondria en el nodo real "system" como
+      # cualquier pod normal.
+      nodeSelector:
+        kubernetes.io/role: agent
+        type: virtual-kubelet
+      tolerations:
+        - key: virtual-kubelet.io/provider
+          operator: Exists
+        - key: azure.com/aci
+          effect: NoSchedule
+      containers:
+        - name: hello-world
+          image: <ACR_LOGIN_SERVER>/hello-world:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
