@@ -1,0 +1,36 @@
+# Values de Helm para kedacore/keda (chart 2.20.2). No hace falta reemplazar
+# ningun placeholder - KEDA no expone nada publicamente (sin Ingress, sin DNS,
+# sin certificado), a diferencia de argocd/values.yaml.
+#
+# Verificado contra el chart real antes de asumirlo:
+#   - nodeSelector/tolerations de nivel superior (no anidados por componente)
+#     se propagan a los 3 Deployments (operator, metrics-apiserver,
+#     admission-webhooks) - confirmado renderizando.
+#   - El chart SI trae resources por default, pero requests != limits en los
+#     3 - ACI no tiene overcommit (mismo gotcha que argocd/values.yaml), hay
+#     que igualarlos. Las rutas correctas son resources.operator /
+#     resources.metricServer (sin "s") / resources.webhooks - un bloque
+#     separado, no anidado dentro de cada seccion de componente.
+#   - El certificado del webhook lo genera y rota el propio keda-operator
+#     (RBAC propio sobre el secret kedaorg-certs) - sin cert-manager, sin
+#     volumen problematico para Virtual Nodes (solo "secret", nada de PVC).
+
+nodeSelector:
+  kubernetes.io/role: agent
+  type: virtual-kubelet
+tolerations:
+  - key: virtual-kubelet.io/provider
+    operator: Exists
+  - key: azure.com/aci
+    effect: NoSchedule
+
+resources:
+  operator:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+  metricServer:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+  webhooks:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }

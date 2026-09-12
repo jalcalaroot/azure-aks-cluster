@@ -75,9 +75,12 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   # AGIC (Application Gateway Ingress Controller) como addon administrado -
   # gateway_id apunta al Application Gateway "bring your own" de
-  # app_gateway.tf. AKS crea automaticamente la managed identity de AGIC y
-  # le da los permisos que necesita sobre ese Application Gateway - no hace
-  # falta armar esa identity/role assignment a mano.
+  # app_gateway.tf. AKS SI crea automaticamente la managed identity de AGIC,
+  # pero NO le da ningun permiso sobre el Application Gateway/subnet/resource
+  # group - eso hay que armarlo a mano (ver los tres azurerm_role_assignment
+  # mas abajo, agregados despues de que el addon fallara en runtime sin
+  # ellos). Este comentario decia lo contrario hasta que se encontro la
+  # contradiccion con el codigo real de este mismo archivo.
   ingress_application_gateway {
     gateway_id = azurerm_application_gateway.this.id
   }
