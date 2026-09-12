@@ -1,6 +1,110 @@
 # azure-aks-cluster
 
-Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace.
+Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace), mirroring its role in `aws-eks-cluster`.
+
+## Por que este cluster no puede ser 100% serverless (a diferencia de EKS)
+
+EKS corre 100% en Fargate, sin ningun node group. AKS no puede replicar eso: `default_node_pool`
+es un bloque obligatorio de `azurerm_kubernetes_cluster`, y varios componentes necesitan
+`hostNetwork`/acceso al host que Virtual Nodes (ACI) no provee - CoreDNS, kube-proxy, Azure CNS, el
+addon de AGIC y el propio ACI connector que habilita Virtual Nodes. La paridad real alcanzable es:
+toda *carga de trabajo* (hello-world, los 8 componentes de Argo CD) corre en Virtual Nodes; el node
+pool real queda dedicado exclusivamente a esos componentes de sistema, sin excepciones.
+
+## Argo CD en Virtual Nodes, no en el node pool real - y por que no hacia falta pedir mas cuota
+
+La cuota regional de este subscription es de 4 vCPU **totales**, ya consumidos enteros por los 2
+nodos reales existentes (`variables.tf`) - un tercer nodo (o VMs mas grandes) hubiera requerido
+pedir un aumento de cuota a Azure antes de poder aplicar nada. Los cores de ACI son una cuota
+**separada** de la de VMs, asi que los ~1.4 vCPU / ~2.3 GB que consume Argo CD corren por completo
+fuera de ese techo - el node pool real no se toca.
+
+Verificado contra el chart real (`argo/argo-cd` 10.8.2, el mismo pin que usa `aws-eks-cluster`)
+antes de asumir que esto funcionaba:
+- `global.nodeSelector`/`global.tolerations` llegan a los 8 pod templates del chart (6 Deployment,
+  1 StatefulSet `argocd-application-controller`, 1 Job `argocd-redis-secret-init`) - confirmado
+  renderizando el chart, no leido de la doc.
+- ACI no tiene overcommit (mismo gotcha que ya documentaba este archivo para hello-world) -
+  `resources.requests` debe ser identico a `resources.limits` en los 8 workloads. El chart no fija
+  ninguno por default - hay que declararlos los 8, ver `argocd/values.yaml`.
+- Los `initContainers` (ej. `copyutil` en varios de los Deployments, que copia el binario de argocd
+  a un volumen compartido) heredan el `resources` del componente padre en este chart - confirmado
+  renderizando, no asumido. Si no fuera asi, ACI rechazaria el pod igual por el mismo motivo de
+  arriba, solo que en un container distinto al que uno mira primero.
+- Los unicos tipos de volumen que usa el chart son `configMap`/`emptyDir`/`secret` - nada de PVC ni
+  `hostPath`, compatible con Virtual Nodes sin ningun cambio adicional.
+
+Sizing de `argocd/values.yaml` es un punto de partida (controller 500m/1Gi, repoServer 250m/512Mi,
+resto 100m/128Mi) - ajustar contra OOMKills o CPU throttling reales una vez desplegado, mismo
+criterio que el resto de este repo ("encontrado empiricamente, no leido de la doc" - ver mas abajo).
+
+## Segundo certificado + segundo host, mismo Application Gateway
+
+AGIC soporta multiples Ingress sobre un mismo Application Gateway de forma nativa (multi-site,
+por host) - a diferencia de un ALB de AWS, no hace falta nada equivalente a
+`alb.ingress.kubernetes.io/group.name`. `argocd.azure.jalcalaroot.com` comparte el mismo
+`azurerm_public_ip.appgw` que `aks.azure.jalcalaroot.com`, cada uno con su propio
+`acme_certificate` (recursos separados, no un `for_each`, para no arriesgar el cert de hello-world
+que ya esta en uso - mismo criterio que tomo `aws-eks-cluster/acm.tf`) y su propio K8s TLS Secret
+(`argocd-server-tls`, nombre que fija el chart cuando `server.ingress.tls: true`).
+
+## `server.insecure: true` en Argo CD - mismo motivo que en EKS
+
+AGIC termina TLS en el gateway (el Ingress de `argocd-server` referencia el TLS Secret). Si el
+backend de Argo tambien sirve HTTPS (su default), queda un mismatch/redirect loop. `insecure` hace
+que el pod sirva HTTP plano puertas adentro - mismo patron que usa `aws-eks-cluster` con el ALB.
+
+## Application Gateway no tiene ningun certificado gratis/administrado - a diferencia del ALB de AWS
+
+Verificado contra la doc oficial de Microsoft (no asumido): *"Application gateway doesn't provide
+any capability to create a new certificate or send a certificate request to a certification
+authority"* - hay que traer el certificado propio siempre (PFX subido a mano, o referenciado desde
+Key Vault). Azure si tiene certificados gratis administrados, pero en otros dos productos, ninguno
+aplicable aca:
+- **App Service** - certificado gratis real (DigiCert, auto-renovado), pero solo para dominios
+  custom de App Service.
+- **Front Door Standard/Premium** - certificados administrados por Microsoft, pero incluidos dentro
+  de la tarifa del servicio (Standard arranca ~US$35/mes, Premium ~US$330/mes) - "gratis" solo si ya
+  se esta pagando Front Door, que no es este proyecto.
+
+Esta es una asimetria real entre las dos nubes, no una decision de diseno de este repo: en AWS, ACM
+es gratis y se conecta directo al ALB (ver `aws-eks-cluster/acm.tf`) - ahi Let's Encrypt seria
+redundante. En Azure, para Application Gateway especificamente, Let's Encrypt (`acme.tf`) no es un
+atajo barato - es la **unica** opcion gratuita que existe, porque Azure no le dio esa capacidad a
+este servicio en particular. Si el dia de mañana este proyecto migrara a Front Door en vez de
+Application Gateway "bring your own", recien ahi tendria sentido evaluar sacar `acme.tf` a favor de
+un certificado administrado por Microsoft - hoy no aplica.
+
+## Costo real de Argo CD idle, no solo el de hello-world
+
+Los 8 componentes corriendo 24/7 en ACI a los tamanos de `argocd/values.yaml` suman ~1.4 vCPU /
+~2.3 GB combinados - del orden de US$50-60/mes solo por tener Argo CD prendido sin sincronizar
+nada todavia. `dex` (SSO, sin usar hoy) y `notifications` (sin canales configurados) son ~US$8/mes
+de eso - se dejan prendidos por paridad 1:1 con `aws-eks-cluster`, pero el dato queda escrito para
+la proxima vez que se revise el costo del proyecto.
+
+## KEDA instalado (2026-09-12) - Virtual Nodes, sin cambios de Terraform
+
+Mismo mecanismo de scheduling que Argo CD (`global`... en este chart, `nodeSelector`/`tolerations`
+de nivel superior, ver `keda/values.yaml`) y misma razon: la cuota regional de 4 vCPU no se toca
+porque ACI es una cuota separada. A diferencia de Argo CD, esta vez no hizo falta ningun cambio de
+Terraform (sin DNS, sin certificado, sin Ingress) - KEDA es un operator + un metrics-adapter para
+`external.metrics.k8s.io`, sin UI ni endpoint publico.
+
+Verificado contra el chart real (`kedacore/keda` 2.20.2) antes de asumirlo:
+- Solo 3 Deployments (`keda-operator`, `keda-operator-metrics-apiserver`,
+  `keda-admission-webhooks`), sin Job ni StatefulSet - mas simple que Argo CD.
+- El chart SI trae `resources` por default, pero `requests` (100m/100Mi) != `limits` (1/1000Mi) en
+  los 3 - misma exigencia de ACI que ya documenta este archivo para Argo CD, hubo que igualarlos.
+  Las rutas correctas no estan anidadas dentro de cada seccion de componente como parecería -
+  son un bloque separado `resources.operator` / `resources.metricServer` (sin "s") /
+  `resources.webhooks`, confirmado renderizando antes de escribir `keda/values.yaml`.
+- El certificado del webhook de validacion lo genera y rota el propio `keda-operator` (RBAC propio
+  sobre el secret `kedaorg-certs`) - sin cert-manager, y el unico volumen que usa es `secret`, sin
+  PVC ni hostPath, compatible con Virtual Nodes sin ningun ajuste adicional.
+
+Instalado como infraestructura base, sin ningun `ScaledObject`/`ScaledJob` configurado todavia - no
+hay ninguna app con carga variable real corriendo hoy que justifique uno.
 
 ## Design decisions worth knowing before changing anything
 
@@ -15,7 +119,7 @@ Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AK
 - **The hello-world Deployment needs explicit `nodeSelector` + `tolerations`** (`kubernetes.io/role: agent`, `type: virtual-kubelet`, tolerate `virtual-kubelet.io/provider`) to actually land on the Virtual Node. Without these, the scheduler puts it on the real "system" node like any other pod — Virtual Nodes never claims pods automatically the way it might sound.
 - **`aks.tf`'s `network_profile` needs an explicit `service_cidr`/`dns_service_ip` outside the VNet's range.** AKS defaults to `10.0.0.0/16` for the service CIDR, which collided head-on with `vnet-jalcalaroot` (also `10.0.0.0/16`) — `ServiceCidrOverlapExistingSubnetsCidr` at apply time. Set to `172.16.0.0/16` (purely virtual, never routed on the VNet, so any non-overlapping range works).
 - **`default_node_pool_vm_size` and `default_node_pool_node_count` are both subscription-quota-constrained, found empirically, not by reading docs first:** `Standard_D2s_v5` isn't in this subscription's allowed SKU list for `eastus` (400 `BadRequest`, full allowed list is v7-generation D/E/F plus a few specialized series) — swapped for `Standard_D2s_v7`. Separately, **total regional vCPU quota is only 4** — not per-SKU, the whole region — so with one 2-vCPU node already running, `node_count` tops out at **2**, not 3+, without requesting an Azure quota increase first (`ErrCode_InsufficientVCPUQuota`).
-- **Neither the ACI Connector's nor AGIC's auto-created managed identity gets any RBAC automatically — for either addon.** This contradicts what the docs imply about "bring your own" setups being handled for you. Both failed at runtime until these were added explicitly in `aks.tf`:
+- **Neither the ACI Connector's nor AGIC's auto-created managed identity gets any RBAC automatically — for either addon.** This contradicts what the docs imply about "bring your own" setups being handled for you — and contradicted, for a while, a comment in this repo's own `aks.tf` that claimed the opposite (fixed once the contradiction with the code three lines below it was noticed). Both failed at runtime until these were added explicitly in `aks.tf`:
   - ACI Connector (`aci_connector_linux.connector_identity`) needs **Network Contributor** on `network_aks_virtual_nodes_subnet_id` — without it, the connector pod crash-loops with `AuthorizationFailed` on `subnets/read` the instant it tries to join a container to the subnet.
   - AGIC (`ingress_application_gateway.ingress_application_gateway_identity`) needs **three** separate grants: `Contributor` on the Application Gateway itself, `Reader` on its resource group, *and* **Network Contributor on `network_appgw_subnet_id`** (join/action) — missing any one produces a different opaque error (`ApplicationGatewayForbidden` for the first two, `ApplicationGatewayInsufficientPermissionOnSubnet` for the third). All three are needed because the subnet and (in a real deployment) the gateway can live in a different resource group than the cluster.
   - RBAC propagation after these role assignments can lag a few minutes — a `kubectl delete pod` restart of the connector/AGIC pod that still shows the old `AuthorizationFailed` error doesn't mean the role assignment is wrong, it may just not have propagated yet. Give it 2-3 minutes and retry before assuming the permission itself is incorrect.

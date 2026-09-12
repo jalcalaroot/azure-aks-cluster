@@ -7,7 +7,8 @@ locals {
 
   tags = merge(local.base_tags, var.tags)
 
-  fqdn = "${var.dns_record_name}.${var.dns_zone_name}"
+  fqdn        = "${var.dns_record_name}.${var.dns_zone_name}"
+  argocd_fqdn = "${var.dns_record_name_argocd}.${var.dns_zone_name}"
 }
 
 resource "azurerm_resource_group" "this" {

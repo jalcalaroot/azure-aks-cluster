@@ -129,6 +129,12 @@ variable "dns_record_name" {
   default     = "aks"
 }
 
+variable "dns_record_name_argocd" {
+  description = "Nombre del registro A para la UI de Argo CD -> FQDN final = <dns_record_name_argocd>.<dns_zone_name>"
+  type        = string
+  default     = "argocd"
+}
+
 variable "acme_email" {
   description = "Email para la cuenta ACME de Let's Encrypt. Sin default."
   type        = string

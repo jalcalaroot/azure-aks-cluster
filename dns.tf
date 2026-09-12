@@ -12,3 +12,14 @@ resource "azurerm_dns_a_record" "aks" {
   ttl                 = 300
   records             = [azurerm_public_ip.appgw.ip_address]
 }
+
+# Argo CD comparte el mismo Application Gateway que hello-world (AGIC hace
+# multi-site nativamente, sin necesitar nada equivalente al group.name de un
+# ALB) - mismo Public IP, segundo hostname.
+resource "azurerm_dns_a_record" "argocd" {
+  name                = var.dns_record_name_argocd
+  zone_name           = data.azurerm_dns_zone.this.name
+  resource_group_name = data.azurerm_dns_zone.this.resource_group_name
+  ttl                 = 300
+  records             = [azurerm_public_ip.appgw.ip_address]
+}

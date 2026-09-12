@@ -1,0 +1,88 @@
+# Values de Helm para argo/argo-cd (chart 10.8.2, mismo pin que
+# aws-eks-cluster). Reemplazar <ARGOCD_FQDN> por `terraform output -raw
+# argocd_fqdn` antes de instalar - ver README.
+#
+# Cada bloque de aca abajo esta verificado contra el chart real
+# (`helm template argo/argo-cd --version 10.8.2 -f values.yaml`), no
+# asumido:
+#   - global.nodeSelector/tolerations llegan a los 8 pod templates del
+#     chart (6 Deployment + 1 StatefulSet + 1 Job) - confirmado renderizando.
+#   - Los initContainers (ej. "copyutil", que copia el binario de argocd a
+#     un emptyDir compartido) heredan el resources del componente padre -
+#     confirmado, no hay que declararlos aparte.
+#   - Los unicos volumenes que usa el chart son configMap/emptyDir/secret -
+#     nada de PVC/hostPath, compatible con Virtual Nodes sin cambios.
+
+global:
+  # Mismo mecanismo que k8s/deployment.yaml (hello-world): fuerza cada
+  # componente de Argo CD a Virtual Nodes (ACI) en vez del nodo real -
+  # ninguno de los 8 workloads necesita hostNetwork/acceso al host.
+  nodeSelector:
+    kubernetes.io/role: agent
+    type: virtual-kubelet
+  tolerations:
+    - key: virtual-kubelet.io/provider
+      operator: Exists
+    - key: azure.com/aci
+      effect: NoSchedule
+
+# El chart no fija resources por default en NINGUN componente. ACI no tiene
+# overcommit (mismo gotcha que documenta CLAUDE.md para hello-world) -
+# requests y limits tienen que ser identicos en los 8 workloads, si no
+# ContainerLimitGreaterThanContainerGroupTotalRequest al crear el container
+# group. Sizing inicial, a ajustar contra el deploy real (ver CLAUDE.md).
+controller:
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: 500m, memory: 1Gi }
+
+server:
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  # AGIC termina TLS en el gateway (ver server.ingress.tls abajo) - si el
+  # backend tambien sirve HTTPS por default queda un redirect loop. Mismo
+  # motivo y misma decision que server.insecure en aws-eks-cluster con ALB.
+  ingress:
+    enabled: true
+    ingressClassName: azure-application-gateway
+    hostname: <ARGOCD_FQDN>
+    annotations:
+      appgw.ingress.kubernetes.io/ssl-redirect: "true"
+    tls: true # el chart referencia el secret "argocd-server-tls" - crearlo antes (ver README)
+
+repoServer:
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: 250m, memory: 512Mi }
+
+redis:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+# Job de una sola corrida (genera el secret de auth de redis) - clave de
+# primer nivel, NO redis.secretInit.
+redisSecretInit:
+  resources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+
+dex:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+applicationSet:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+notifications:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+configs:
+  params:
+    server.insecure: true

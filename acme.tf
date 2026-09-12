@@ -34,3 +34,22 @@ resource "acme_certificate" "this" {
     }
   }
 }
+
+# Segundo certificado, para la UI de Argo CD - misma acme_registration
+# (mismo account key), recurso separado (no un for_each sobre una lista de
+# hosts) para no arriesgar el cert de hello-world que ya esta en uso.
+resource "acme_certificate" "argocd" {
+  account_key_pem = acme_registration.this.account_key_pem
+  common_name     = local.argocd_fqdn
+  key_type        = "RSA2048"
+
+  dns_challenge {
+    provider = "azuredns"
+
+    config = {
+      AZURE_ZONE_NAME       = data.azurerm_dns_zone.this.name
+      AZURE_RESOURCE_GROUP  = data.azurerm_dns_zone.this.resource_group_name
+      AZURE_SUBSCRIPTION_ID = var.subscription_id
+    }
+  }
+}
