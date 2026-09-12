@@ -41,7 +41,7 @@ This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspac
 | Resource | Purpose | Docs |
 |---|---|---|
 | Resource Group | Container for everything below, own lifecycle | [Manage resource groups](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-portal) |
-| AKS cluster | One real node (system components) plus the Virtual Nodes add-on for the actual workload | [AKS overview](https://learn.microsoft.com/en-us/azure/aks/what-is-aks) |
+| AKS cluster | Real node pool (system components, 2 nodes by default) plus the Virtual Nodes add-on for the actual workload | [AKS overview](https://learn.microsoft.com/en-us/azure/aks/what-is-aks) |
 | Virtual Nodes (ACI connector) | Runs the hello-world pod as an ACI container group, no VM | [Virtual nodes](https://learn.microsoft.com/en-us/azure/aks/virtual-nodes) |
 | Azure Container Registry (Basic) | Hosts the `hello-world` image; admin user disabled | [ACR overview](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-intro) |
 | Application Gateway (Standard_v2) + AGIC | Public entry point; AGIC reconfigures it automatically from Kubernetes `Ingress` resources | [AGIC overview](https://learn.microsoft.com/en-us/azure/application-gateway/ingress-controller-overview) |
@@ -66,7 +66,7 @@ This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspac
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.5.0
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) + `kubectl`, logged in via `az login`
 - [Docker](https://docs.docker.com/get-docker/)
-- [Helm](https://helm.sh/docs/intro/install/) (to install Argo CD)
+- [Helm](https://helm.sh/docs/intro/install/) (to install Argo CD and KEDA)
 - An existing VNet with: a subnet for AKS nodes, a subnet delegated to `Microsoft.ContainerInstance/containerGroups` for Virtual Nodes, and a subnet for Application Gateway
 - An existing Log Analytics Workspace
 - An existing, already-delegated Azure DNS Zone
@@ -206,8 +206,8 @@ Required GitHub repository variables (Settings → Secrets and variables → Act
 
 ## Cost
 
-Main ongoing costs: AKS control plane (free on the Free SKU), the real node(s), Virtual Nodes (billed per second the pod actually runs), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. hello-world alone is effectively free at this scale — Argo CD is not: its 8 components run 24/7 on Virtual Nodes at roughly 1.4 vCPU / 2.3 GB combined (see `argocd/values.yaml`'s resource requests), on the order of **US$50-60/month** just sitting idle. `dex` and `notifications` (unused today) account for roughly US$8/month of that; kept enabled for parity with `aws-eks-cluster`. KEDA adds a further ~300m vCPU / ~384 MB combined (see `keda/values.yaml`) — on the order of **US$10-12/month**, idle with no `ScaledObject` configured. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
+Main ongoing costs: AKS control plane (free on the Free SKU), the real node(s), Virtual Nodes (billed per second the pod actually runs), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. hello-world alone is effectively free at this scale — Argo CD is not: 7 of its 8 components run 24/7 on Virtual Nodes (the 8th, `redisSecretInit`, is a one-shot Job) at roughly 1.4 vCPU / 2.3 GB combined (see `argocd/values.yaml`'s resource requests), on the order of **US$50-60/month** just sitting idle. `dex` and `notifications` (unused today) account for roughly US$8/month of that; kept enabled for parity with `aws-eks-cluster`. KEDA adds a further ~300m vCPU / ~384 MB combined (see `keda/values.yaml`) — on the order of **US$10-12/month**, idle with no `ScaledObject` configured. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
 
 ## Not covered
 
-WAF on Application Gateway, Azure AD RBAC integration for the cluster, autoscaling, multi-region, network policies, automated cluster-side certificate rotation.
+WAF on Application Gateway, Azure AD RBAC integration for the cluster, cluster/node autoscaling, pod autoscaling (KEDA installed but no `ScaledObject` configured), multi-region, network policies, automated cluster-side certificate rotation.
