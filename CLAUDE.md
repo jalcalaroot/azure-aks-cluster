@@ -77,7 +77,8 @@ un certificado administrado por Microsoft - hoy no aplica.
 
 ## Costo real de Argo CD idle, no solo el de hello-world
 
-Los 8 componentes corriendo 24/7 en ACI a los tamanos de `argocd/values.yaml` suman ~1.4 vCPU /
+7 de los 8 componentes corren 24/7 en ACI (el octavo, `redisSecretInit`, es un Job de una sola
+corrida que no queda residente) - a los tamanos de `argocd/values.yaml` suman ~1.4 vCPU /
 ~2.3 GB combinados - del orden de US$50-60/mes solo por tener Argo CD prendido sin sincronizar
 nada todavia. `dex` (SSO, sin usar hoy) y `notifications` (sin canales configurados) son ~US$8/mes
 de eso - se dejan prendidos por paridad 1:1 con `aws-eks-cluster`, pero el dato queda escrito para
