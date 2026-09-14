@@ -45,7 +45,7 @@ jobs:
       # resolucion OIDC interna de azurerm - necesita este login propio.
       # Ver azure-container-apps/CLAUDE.md para el detalle completo.
       - name: Azure login (OIDC)
-        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ env.ARM_CLIENT_ID }}
           tenant-id: ${{ env.ARM_TENANT_ID }}
