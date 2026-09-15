@@ -194,7 +194,7 @@ GitHub Actions, authenticated to Azure via OIDC (Workload Identity Federation) �
 
 | Workflow | Trigger | Identity | What it does |
 |---|---|---|---|
-| `terraform-plan.yml` | Pull request | `aks-cluster-plan` (read-only) | `fmt -check`, `validate`, tflint, Checkov (blocking), `plan`, [Checkov plan scan](https://github.com/jalcalaroot/gha-checkov-plan-scan) (second pass against the resolved plan, not blocking — see CLAUDE.md), posts the plan as a PR comment |
+| `terraform-plan.yml` | Pull request | `aks-cluster-plan` (read-only) | `fmt -check`, `validate`, tflint, Checkov + [custom RBAC rules](https://github.com/jalcalaroot/johan-cloud-policies) (blocking), `plan`, [Checkov plan scan](https://github.com/jalcalaroot/gha-checkov-plan-scan) (second pass against the resolved plan, not blocking — see CLAUDE.md), posts the plan as a PR comment |
 | `terraform-apply.yml` | Push to `main`, and weekly on a schedule | `aks-cluster-agent` (scoped to this project's resources only) | `plan` + `apply` |
 | `gitleaks.yml` | PR / push to `main` | — | Secret scanning |
 

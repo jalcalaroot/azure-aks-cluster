@@ -76,6 +76,15 @@ jobs:
           tflint --init
           tflint --recursive
 
+      # Reglas propias (IAM/RBAC), no cubiertas por los checks built-in de
+      # Checkov - ver jalcalaroot/johan-cloud-policies.
+      - name: Checkout de las reglas custom de Checkov
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: jalcalaroot/johan-cloud-policies
+          path: .johan-cloud-policies
+          ref: ed7675c85bb67c6d063c6b87c468916d7546ee01 # main (2026-09-15)
+
       - name: Checkov
         uses: bridgecrewio/checkov-action@a8664e3a0549367977f0cda990a34311835c87c0 # v12.3123.0
         with:
@@ -83,6 +92,7 @@ jobs:
           framework: terraform
           quiet: true
           soft_fail: false
+          external_checks_dirs: .johan-cloud-policies/custom_policies/azure
 
       - name: Terraform plan
         id: plan
