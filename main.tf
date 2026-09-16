@@ -14,6 +14,12 @@ locals {
 
   fqdn        = "${var.dns_record_name}.${var.dns_zone_name}"
   argocd_fqdn = "${var.dns_record_name_argocd}.${var.dns_zone_name}"
+
+  demo_apps_fqdns = {
+    podinfo     = "${var.dns_record_name_podinfo}.${var.dns_zone_name}"
+    game-2048   = "${var.dns_record_name_game_2048}.${var.dns_zone_name}"
+    uptime-kuma = "${var.dns_record_name_uptime_kuma}.${var.dns_zone_name}"
+  }
 }
 
 resource "azurerm_resource_group" "this" {

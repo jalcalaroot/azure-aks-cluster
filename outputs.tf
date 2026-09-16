@@ -52,3 +52,20 @@ output "argocd_certificate_private_key_pem" {
   value       = acme_certificate.argocd.private_key_pem
   sensitive   = true
 }
+
+output "demo_apps_fqdns" {
+  description = "Dominios publicos de las 3 apps demo de k8s-apps"
+  value       = local.demo_apps_fqdns
+}
+
+output "demo_apps_certificate_pem" {
+  description = "Certificado Let's Encrypt en PEM por app, para crear el TLS Secret de Kubernetes de cada Ingress en k8s-apps"
+  value       = { for app, cert in acme_certificate.demo_apps : app => "${cert.certificate_pem}${cert.issuer_pem}" }
+  sensitive   = true
+}
+
+output "demo_apps_certificate_private_key_pem" {
+  description = "Clave privada por app - sensible, usar solo para crear el TLS Secret de Kubernetes de cada Ingress en k8s-apps"
+  value       = { for app, cert in acme_certificate.demo_apps : app => cert.private_key_pem }
+  sensitive   = true
+}

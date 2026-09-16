@@ -6,33 +6,29 @@ A hello-world container served over HTTPS on a custom domain, running on **Azure
 
 ```
 Azure DNS (azure.jalcalaroot.com)
- ├─ aks.azure.jalcalaroot.com    ──┐
- └─ argocd.azure.jalcalaroot.com ──┤
-                                    ▼
+ ├─ aks.azure.jalcalaroot.com          ──┐
+ ├─ argocd.azure.jalcalaroot.com       ──┤
+ ├─ podinfo.azure.jalcalaroot.com      ──┤
+ ├─ game-2048.azure.jalcalaroot.com    ──┤
+ └─ uptime-kuma.azure.jalcalaroot.com  ──┤
+                                          ▼
         Application Gateway (AGIC, native multi-site)
         one Let's Encrypt cert per host (K8s TLS Secret)
-                                    │
+                                          │
         ───── VNet-internal only below this line ─────
-                                    │
+                                          │
 AKS cluster (managed control plane)
- ├─ snet-aks (real node) — system components only, no workload runs here
- │    ├─ CoreDNS, kube-proxy
- │    ├─ Azure CNS
- │    ├─ AGIC (addon)
- │    └─ ACI connector
- └─ snet-aks-virtual-nodes (ACI-backed) — every workload runs here
+ ├─ snet-aks (real node) — system components + Argo CD + KEDA
+ │    ├─ CoreDNS, kube-proxy, Azure CNS, AGIC (addon), ACI connector
+ │    ├─ Argo CD (Helm, 7 pods) — GitOps target: k8s-apps (separate repo)
+ │    └─ KEDA (Helm, 3 pods) — ScaledObjects live in k8s-apps
+ └─ snet-aks-virtual-nodes (ACI-backed) — every app pod runs here
       ├─ hello-world (Deployment, image: ACR)
-      ├─ Argo CD (Helm, 8 pods)
-      │    ├─ server, repo-server, application-controller,
-      │    │  redis, dex, notifications, applicationset-controller,
-      │    │  redis-secret-init (Job)
-      │    └─ GitOps target: none yet
-      └─ KEDA (Helm, 3 pods)
-           ├─ operator, metrics-apiserver, admission-webhooks
-           └─ no ScaledObject configured yet - installed as base platform
+      └─ podinfo / game-2048 / uptime-kuma / headlamp (Argo CD-managed, k8s-apps;
+         headlamp actually runs on the real node pool - see k8s-apps/README.md)
 ```
 
-Application Gateway is the only public entry point, serving both hosts (`aks.*`, `argocd.*`) via AGIC's native multi-site support — one Ingress per host, no extra Application Gateway needed. hello-world and all 3 KEDA components run on Virtual Nodes, no VM behind them, billed per second, scheduled there via `nodeSelector`/`tolerations` (see `k8s/deployment.yaml` and `keda/values.yaml`), same mechanism an EKS Fargate profile uses to claim pods by selector. **Argo CD's 7 components run on the real node pool instead** — ACI/Virtual Nodes rejects any pod that declares `args` without an explicit `command` (relying on the image's own `ENTRYPOINT`, which is what almost the entire `argo-cd` chart does), found on the first real install; see CLAUDE.md. KEDA has no public endpoint of its own — it's a pod-scaling operator plus a metrics adapter, not something Application Gateway routes to. The real node pool exists because AKS requires one, because Virtual Nodes can't run components needing `hostNetwork`/host access (CoreDNS, kube-proxy, AGIC, the ACI connector itself), and now also because Argo CD needs it — see CLAUDE.md for why this means AKS can't be as fully serverless as EKS.
+Application Gateway is the only public entry point, serving all 5 hosts via AGIC's native multi-site support — one Ingress per host, no extra Application Gateway needed. hello-world and the 3 `k8s-apps` demo apps run on Virtual Nodes, no VM behind them, billed per second, scheduled there via `nodeSelector`/`tolerations` (see `k8s/deployment.yaml` and each app's `overlays/aks/patch-virtual-node.yaml` in `k8s-apps`), same mechanism an EKS Fargate profile uses to claim pods by selector. **Argo CD and KEDA run on the real node pool instead** — ACI/Virtual Nodes rejects any pod that declares `args` without an explicit `command` (relying on the image's own `ENTRYPOINT`, which is what almost the entire `argo-cd` chart does), found on the first real install; see CLAUDE.md. `metrics-server` also never returns pod metrics for anything on Virtual Nodes (confirmed repeatedly — see CLAUDE.md and `k8s-apps/CLAUDE.md`), so KEDA's `cpu`-trigger `ScaledObject`s don't actually scale the 3 Virtual Node apps, only `headlamp` (real node pool). The real node pool exists because AKS requires one, because Virtual Nodes can't run components needing `hostNetwork`/host access (CoreDNS, kube-proxy, AGIC, the ACI connector itself), and now also because Argo CD and KEDA need it — see CLAUDE.md for why this means AKS can't be as fully serverless as EKS.
 
 This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspace provisioned by a sibling network project; it does not create its own virtual network. Design rationale and implementation notes live in [CLAUDE.md](CLAUDE.md).
 
@@ -47,7 +43,7 @@ This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspac
 | Application Gateway (Standard_v2) + AGIC | Public entry point; AGIC reconfigures it automatically from Kubernetes `Ingress` resources | [AGIC overview](https://learn.microsoft.com/en-us/azure/application-gateway/ingress-controller-overview) |
 | Public IP (Standard) | Attached to the Application Gateway | [Public IP addresses](https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-addresses) |
 | Azure DNS Zone (existing, not created here) | Hosts the `A` record for the public hostname | [Azure DNS overview](https://learn.microsoft.com/en-us/azure/dns/dns-overview) |
-| Let's Encrypt certificates (x2, via ACME DNS-01) | One per public host (`aks.*`, `argocd.*`), each delivered to the cluster as its own Kubernetes TLS Secret | [Let's Encrypt](https://letsencrypt.org/how-it-works/) |
+| Let's Encrypt certificates (x5, via ACME DNS-01) | One per public host (`aks.*`, `argocd.*`, plus the 3 `k8s-apps` demo apps), each delivered to the cluster as its own Kubernetes TLS Secret | [Let's Encrypt](https://letsencrypt.org/how-it-works/) |
 | User Assigned Managed Identities (x2) | CI/CD identities for GitHub Actions, federated via OIDC — no stored secrets | [Managed identities overview](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/overview) |
 | Container Insights (`oms_agent`) | AKS-specific monitoring, forwarded to an existing Log Analytics Workspace | [Container insights](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview) |
 | Argo CD (Helm, `argocd` namespace) | GitOps controller — 7 components on the real node pool (ACI can't run this chart's pods, see CLAUDE.md); UI at `argocd.azure.jalcalaroot.com`. Manages 4 apps from [`k8s-apps`](https://github.com/jalcalaroot/k8s-apps) (`applicationset-aks.yaml` + `headlamp-application.yaml`) | [argo-cd chart](https://github.com/argoproj/argo-helm) |
@@ -180,6 +176,7 @@ Renewing the certificate and Let's Encrypt rate limits: see [CLAUDE.md](CLAUDE.m
 | `dns_zone_name` / `dns_zone_resource_group_name` | `azure.jalcalaroot.com` / `jalcalaroot` | must already exist |
 | `dns_record_name` | `aks` | final FQDN = `<dns_record_name>.<dns_zone_name>` |
 | `dns_record_name_argocd` | `argocd` | Argo CD UI FQDN = `<dns_record_name_argocd>.<dns_zone_name>` |
+| `dns_record_name_podinfo` / `dns_record_name_game_2048` / `dns_record_name_uptime_kuma` | `podinfo` / `game-2048` / `uptime-kuma` | FQDNs for the 3 `k8s-apps` demo apps, same Application Gateway |
 | `acme_server_url` | Let's Encrypt production | use staging while iterating |
 
 ## Outputs
@@ -194,6 +191,20 @@ Renewing the certificate and Let's Encrypt rate limits: see [CLAUDE.md](CLAUDE.m
 | `certificate_pem` / `certificate_private_key_pem` | Sensitive — for creating the Kubernetes TLS Secret |
 | `argocd_fqdn` | Argo CD UI public hostname |
 | `argocd_certificate_pem` / `argocd_certificate_private_key_pem` | Sensitive — for creating the `argocd-server-tls` Secret |
+| `demo_apps_fqdns` | Public hostnames for the 3 `k8s-apps` demo apps |
+| `demo_apps_certificate_pem` / `demo_apps_certificate_private_key_pem` | Sensitive, keyed by app — for creating each app's `<app>-tls` Secret |
+
+## Public URLs
+
+| App | URL |
+|---|---|
+| hello-world | https://aks.azure.jalcalaroot.com |
+| Argo CD | https://argocd.azure.jalcalaroot.com |
+| podinfo | https://podinfo.azure.jalcalaroot.com |
+| game-2048 | https://game-2048.azure.jalcalaroot.com |
+| uptime-kuma | https://uptime-kuma.azure.jalcalaroot.com |
+
+All 5 share the same Application Gateway via AGIC's multi-site support, one Let's Encrypt cert per host. The last 3 are deployed and managed by [`k8s-apps`](https://github.com/jalcalaroot/k8s-apps) via Argo CD, not by this repo — their `Ingress` manifests live there (`apps/<name>/overlays/aks/ingress.yaml`), referencing TLS Secrets (`<app>-tls`) created manually from this repo's `demo_apps_certificate_pem`/`demo_apps_certificate_private_key_pem` outputs, same flow as `hello-world-tls`/`argocd-server-tls` above.
 
 ## CI/CD
 
