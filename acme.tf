@@ -53,3 +53,25 @@ resource "acme_certificate" "argocd" {
     }
   }
 }
+
+# Las 3 apps demo de k8s-apps - for_each en vez de un recurso explicito por
+# app (a diferencia de hello-world/argocd arriba): son 3 certs idénticos
+# salvo el hostname, sin ningun otro cert en uso que arriesgar al tocar
+# este bloque despues.
+resource "acme_certificate" "demo_apps" {
+  for_each = local.demo_apps_fqdns
+
+  account_key_pem = acme_registration.this.account_key_pem
+  common_name     = each.value
+  key_type        = "RSA2048"
+
+  dns_challenge {
+    provider = "azuredns"
+
+    config = {
+      AZURE_ZONE_NAME       = data.azurerm_dns_zone.this.name
+      AZURE_RESOURCE_GROUP  = data.azurerm_dns_zone.this.resource_group_name
+      AZURE_SUBSCRIPTION_ID = var.subscription_id
+    }
+  }
+}

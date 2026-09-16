@@ -135,6 +135,23 @@ variable "dns_record_name_argocd" {
   default     = "argocd"
 }
 
+# Las 3 apps demo de k8s-apps, mismo Application Gateway (multi-site nativo,
+# un cert por host via SNI) - mismo patron que aws-eks-cluster.
+variable "dns_record_name_podinfo" {
+  type    = string
+  default = "podinfo"
+}
+
+variable "dns_record_name_game_2048" {
+  type    = string
+  default = "game-2048"
+}
+
+variable "dns_record_name_uptime_kuma" {
+  type    = string
+  default = "uptime-kuma"
+}
+
 variable "acme_email" {
   description = "Email para la cuenta ACME de Let's Encrypt. Sin default."
   type        = string
