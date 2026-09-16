@@ -83,7 +83,7 @@ jobs:
         with:
           repository: jalcalaroot/johan-cloud-policies
           path: .johan-cloud-policies
-          ref: ed7675c85bb67c6d063c6b87c468916d7546ee01 # main (2026-09-15)
+          ref: 1af5bf0ac9c4855d25ab78d762f679e2c38c9c99 # main (2026-09-15)
 
       - name: Checkov
         uses: bridgecrewio/checkov-action@a8664e3a0549367977f0cda990a34311835c87c0 # v12.3123.0
@@ -114,10 +114,11 @@ jobs:
       - name: Checkov (plan scan)
         id: checkov_plan
         if: steps.plan.outputs.exitcode == '0'
-        uses: jalcalaroot/gha-checkov-plan-scan@359af929af49ee32b4ab5b94f3c828ea006fd54b # main (2026-09-15)
+        uses: jalcalaroot/gha-checkov-plan-scan@0524df4d27060fc7b3ae86433d8f5cefa9664e83 # main (2026-09-15)
         with:
           plan-file: plan.json
           repo-root: .
+          external-checks-dir: .johan-cloud-policies/custom_policies/plan_only/azure
 
       - name: Subir el SARIF del plan scan como artifact
         if: steps.plan.outputs.exitcode == '0'

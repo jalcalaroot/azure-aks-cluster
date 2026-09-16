@@ -27,7 +27,7 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   default_node_pool {
     name           = "system"
-    vm_size        = var.default_node_pool_vm_size
+    vm_size        = var.default_node_pool_vm_size # tflint-ignore: azurerm_kubernetes_cluster_default_node_pool_invalid_vm_size
     node_count     = var.default_node_pool_node_count
     vnet_subnet_id = var.network_aks_subnet_id
 

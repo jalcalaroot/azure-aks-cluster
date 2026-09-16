@@ -1,8 +1,13 @@
 locals {
+  # Keys en ingles para ser consistente con el resto de la cuenta
+  # (aws-eks-cluster, el modulo tags de jalcalaroot-azure-bootstrap) -
+  # este repo usaba claves en espanol, lo que hacia que
+  # CKV2_CUSTOM_AZURE_3 (johan-cloud-policies) nunca pudiera verificar
+  # Owner/Environment aqui, aunque el recurso si estuviera tageado.
   base_tags = {
-    ambiente    = var.environment
-    propietario = var.owner
-    proyecto    = var.project
+    Environment = var.environment
+    Owner       = var.owner
+    Project     = var.project
   }
 
   tags = merge(local.base_tags, var.tags)
