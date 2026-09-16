@@ -62,6 +62,7 @@ resource "azurerm_role_assignment" "ci_plan_rg_reader" {
 # especifico, no a todo el resource group - el agent solo puede otorgar
 # accesos SOBRE ese recurso puntual, no sobre cualquier cosa.
 resource "azurerm_role_assignment" "ci_agent_acr_rbac_admin" {
+  #checkov:skip=CKV2_CUSTOM_AZURE_1:RBAC Administrator es necesario aqui especificamente (ver comentario arriba: Contributor no incluye Microsoft.Authorization/roleAssignments/write), pero acotado al recurso ACR puntual, no a todo el resource group ni a la suscripcion - el agent solo puede otorgar accesos sobre ese recurso, no escalar mas alla de el.
   scope                = azurerm_container_registry.this.id
   role_definition_name = "Role Based Access Control Administrator"
   principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
@@ -99,6 +100,41 @@ resource "azurerm_role_assignment" "ci_agent_appgw_subnet_network_contributor" {
   scope                = var.network_appgw_subnet_id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+}
+
+# ci_plan tambien necesita poder LEER estos 3 role assignments del agent
+# durante el refresh de "terraform plan" (Microsoft.Authorization/roleAssignments/read
+# sobre cada scope) - gap real, no se detecto hasta la primera vez que un
+# plan corrio de verdad contra este cluster (ci_plan solo tenia Reader a
+# nivel de resource group, que no alcanza para leer un role assignment
+# scoped a un subnet fuera de ese RG).
+resource "azurerm_role_assignment" "ci_plan_aks_subnet_network_reader" {
+  scope                = var.network_aks_subnet_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
+resource "azurerm_role_assignment" "ci_plan_aks_virtual_nodes_subnet_network_reader" {
+  scope                = var.network_aks_virtual_nodes_subnet_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
+resource "azurerm_role_assignment" "ci_plan_appgw_subnet_network_reader" {
+  scope                = var.network_appgw_subnet_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
+# Refrescar el estado de azurerm_kubernetes_cluster.this en cada plan
+# necesita poder leer las credenciales de usuario del cluster
+# (Microsoft.ContainerService/managedClusters/listClusterUserCredential/action) -
+# "Reader" no la incluye. Mismo gap que arriba: nunca se detecto porque
+# ningun plan real habia corrido contra este cluster hasta ahora.
+resource "azurerm_role_assignment" "ci_plan_cluster_user" {
+  scope                = azurerm_kubernetes_cluster.this.id
+  role_definition_name = "Azure Kubernetes Service Cluster User Role"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 # Backend remoto: Storage Blob Data Contributor (data plane, lease de
