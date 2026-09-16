@@ -1,38 +1,47 @@
 # azure-aks-cluster
 
-Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace), mirroring its role in `aws-eks-cluster`.
+Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace, real node pool — see below), mirroring its role in `aws-eks-cluster`.
 
 ## Por que este cluster no puede ser 100% serverless (a diferencia de EKS)
 
 EKS corre 100% en Fargate, sin ningun node group. AKS no puede replicar eso: `default_node_pool`
 es un bloque obligatorio de `azurerm_kubernetes_cluster`, y varios componentes necesitan
 `hostNetwork`/acceso al host que Virtual Nodes (ACI) no provee - CoreDNS, kube-proxy, Azure CNS, el
-addon de AGIC y el propio ACI connector que habilita Virtual Nodes. La paridad real alcanzable es:
-toda *carga de trabajo* (hello-world, los 8 componentes de Argo CD) corre en Virtual Nodes; el node
-pool real queda dedicado exclusivamente a esos componentes de sistema, sin excepciones.
+addon de AGIC y el propio ACI connector que habilita Virtual Nodes. hello-world corre en Virtual
+Nodes; Argo CD, no (ver abajo) - el node pool real queda dedicado a los componentes de sistema
+**mas** Argo CD, no exclusivamente a sistema como se pensaba originalmente.
 
-## Argo CD en Virtual Nodes, no en el node pool real - y por que no hacia falta pedir mas cuota
+## Argo CD termino en el node pool real, no en Virtual Nodes (revertido 2026-09-16)
 
-La cuota regional de este subscription es de 4 vCPU **totales**, ya consumidos enteros por los 2
-nodos reales existentes (`variables.tf`) - un tercer nodo (o VMs mas grandes) hubiera requerido
-pedir un aumento de cuota a Azure antes de poder aplicar nada. Los cores de ACI son una cuota
-**separada** de la de VMs, asi que los ~1.4 vCPU / ~2.3 GB que consume Argo CD corren por completo
-fuera de ese techo - el node pool real no se toca.
+El plan original era Virtual Nodes para los 8 componentes de Argo CD, igual que hello-world, para
+no tocar la cuota de VM (ver mas abajo). Se verifico contra el chart renderizado
+(`helm template`) antes de asumir que funcionaba: `global.nodeSelector`/`tolerations` llegan a los
+8 pod templates, ACI no tiene overcommit (requests debe ser igual a limits, declarado para los 8),
+los `initContainers` heredan `resources` del componente padre, los unicos volumenes son
+`configMap`/`emptyDir`/`secret` (sin PVC/hostPath). Todo eso resulto correcto - pero **ninguna de
+esas verificaciones prueba que ACI pueda arrancar el container en si**, y esa es la parte que fallo
+en el primer install real:
 
-Verificado contra el chart real (`argo/argo-cd` 10.8.2, el mismo pin que usa `aws-eks-cluster`)
-antes de asumir que esto funcionaba:
-- `global.nodeSelector`/`global.tolerations` llegan a los 8 pod templates del chart (6 Deployment,
-  1 StatefulSet `argocd-application-controller`, 1 Job `argocd-redis-secret-init`) - confirmado
-  renderizando el chart, no leido de la doc.
-- ACI no tiene overcommit (mismo gotcha que ya documentaba este archivo para hello-world) -
-  `resources.requests` debe ser identico a `resources.limits` en los 8 workloads. El chart no fija
-  ninguno por default - hay que declararlos los 8, ver `argocd/values.yaml`.
-- Los `initContainers` (ej. `copyutil` en varios de los Deployments, que copia el binario de argocd
-  a un volumen compartido) heredan el `resources` del componente padre en este chart - confirmado
-  renderizando, no asumido. Si no fuera asi, ACI rechazaria el pod igual por el mismo motivo de
-  arriba, solo que en un container distinto al que uno mira primero.
-- Los unicos tipos de volumen que usa el chart son `configMap`/`emptyDir`/`secret` - nada de PVC ni
-  `hostPath`, compatible con Virtual Nodes sin ningun cambio adicional.
+> ACI does not support providing args without specifying the command. Please supply both command
+> and args to the pod spec.
+
+Casi todo el chart de `argo-cd` declara `args` confiando en el `ENTRYPOINT` de la imagen (el patron
+normal en cualquier nodo real) - ACI/virtual-kubelet no soporta eso, exige `command` explicito.
+Reescribir `command`+`args` component por component (6 imagenes distintas) para mantenerlos en
+Virtual Nodes no es viable de sostener a traves de cada bump de version del chart - se movio todo
+`argocd/values.yaml`'s `global.nodeSelector`/`tolerations` al node pool real en su lugar.
+
+Esto **no** necesito pedir mas cuota de VM: la cuota regional (4 vCPU totales, ya consumidos por
+los 2 nodos existentes - ver `variables.tf`) rige la creacion de VMs nuevas o mas grandes, no
+cuantos pods corren en una VM ya existente. Los ~1.4 vCPU / ~2.3 GB combinados de los 7 workloads
+de Argo CD (el Job `argocd-redis-secret-init` corre y termina antes de que el resto del release se
+cree) entran sin problema en la capacidad ya disponible de los 2 nodos `Standard_D2s_v7`.
+
+Otro gap real encontrado en el mismo install: el ACI connector de este cluster convierte memoria a
+GB truncando a 1 decimal (bug de precision del connector, no de este repo) - un `redisSecretInit`
+con 64Mi (0.0625GB) truncaba a 0.0 y Azure lo rechazaba con `ResourceNegativeOrZero` al crear el
+container group. Quedo en 256Mi en `argocd/values.yaml` (con margen), aunque ya no corra en ACI -
+no hace dano dejarlo así.
 
 Sizing de `argocd/values.yaml` es un punto de partida (controller 500m/1Gi, repoServer 250m/512Mi,
 resto 100m/128Mi) - ajustar contra OOMKills o CPU throttling reales una vez desplegado, mismo
