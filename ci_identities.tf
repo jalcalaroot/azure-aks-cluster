@@ -102,6 +102,41 @@ resource "azurerm_role_assignment" "ci_agent_appgw_subnet_network_contributor" {
   principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
+# ci_plan tambien necesita poder LEER estos 3 role assignments del agent
+# durante el refresh de "terraform plan" (Microsoft.Authorization/roleAssignments/read
+# sobre cada scope) - gap real, no se detecto hasta la primera vez que un
+# plan corrio de verdad contra este cluster (ci_plan solo tenia Reader a
+# nivel de resource group, que no alcanza para leer un role assignment
+# scoped a un subnet fuera de ese RG).
+resource "azurerm_role_assignment" "ci_plan_aks_subnet_network_reader" {
+  scope                = var.network_aks_subnet_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
+resource "azurerm_role_assignment" "ci_plan_aks_virtual_nodes_subnet_network_reader" {
+  scope                = var.network_aks_virtual_nodes_subnet_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
+resource "azurerm_role_assignment" "ci_plan_appgw_subnet_network_reader" {
+  scope                = var.network_appgw_subnet_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
+# Refrescar el estado de azurerm_kubernetes_cluster.this en cada plan
+# necesita poder leer las credenciales de usuario del cluster
+# (Microsoft.ContainerService/managedClusters/listClusterUserCredential/action) -
+# "Reader" no la incluye. Mismo gap que arriba: nunca se detecto porque
+# ningun plan real habia corrido contra este cluster hasta ahora.
+resource "azurerm_role_assignment" "ci_plan_cluster_user" {
+  scope                = azurerm_kubernetes_cluster.this.id
+  role_definition_name = "Azure Kubernetes Service Cluster User Role"
+  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+}
+
 # Backend remoto: Storage Blob Data Contributor (data plane, lease de
 # locking) + Reader (management plane, para que el data source
 # azurerm_storage_account pueda leer el objeto ARM) - ambos gaps reales que
