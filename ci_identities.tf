@@ -62,6 +62,7 @@ resource "azurerm_role_assignment" "ci_plan_rg_reader" {
 # especifico, no a todo el resource group - el agent solo puede otorgar
 # accesos SOBRE ese recurso puntual, no sobre cualquier cosa.
 resource "azurerm_role_assignment" "ci_agent_acr_rbac_admin" {
+  #checkov:skip=CKV2_CUSTOM_AZURE_1:RBAC Administrator es necesario aqui especificamente (ver comentario arriba: Contributor no incluye Microsoft.Authorization/roleAssignments/write), pero acotado al recurso ACR puntual, no a todo el resource group ni a la suscripcion - el agent solo puede otorgar accesos sobre ese recurso, no escalar mas alla de el.
   scope                = azurerm_container_registry.this.id
   role_definition_name = "Role Based Access Control Administrator"
   principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
