@@ -193,7 +193,15 @@ Same bootstrapping trap as `aws-eks-cluster`, distinct from `jalcalaroot-azure-b
 
 ## Consumers
 
-None — this is a leaf project, nothing else reads its outputs.
+[`k8s-apps`](https://github.com/jalcalaroot/k8s-apps)'s `Ingress` manifests (`apps/<name>/overlays/aks/ingress.yaml`) reference TLS Secrets (`<app>-tls`) created manually from this repo's `demo_apps_certificate_pem`/`demo_apps_certificate_private_key_pem` outputs — not a `terraform_remote_state` read, same manual-copy pattern as everything else this repo consumes from the network project.
+
+## Las 3 apps demo de k8s-apps ahora tienen URL publica (2026-09-16)
+
+`acme.tf` gano un tercer bloque (`acme_certificate.demo_apps`, `for_each` sobre `podinfo`/`game-2048`/`uptime-kuma`) - mismo patron que hello-world/argocd (misma `acme_registration.this`, mismo `dns_challenge` via `azuredns`), pero con `for_each` en vez de un recurso explicito por app. Comparten el mismo Application Gateway via el multi-site nativo de AGIC - un host mas, no un Application Gateway nuevo.
+
+**A diferencia de AWS, acá no hay validación automática vía Route53** - Terraform emite el cert PEM+key directo (mismo mecanismo que hello-world/argocd), y el TLS Secret de Kubernetes (`<app>-tls`) se crea a mano con `kubectl create secret tls`, igual que `hello-world-tls`/`argocd-server-tls`. El registro DNS (A, no CNAME - Application Gateway tiene IP publica fija, a diferencia del ALB de AWS que usa un DNS name que puede cambiar) tambien se creo a mano vía `az network dns record-set a add-record`.
+
+Mismo aviso que en `aws-eks-cluster/CLAUDE.md`: si un cert se recrea, el TLS Secret hay que regenerarlo a mano - no hay sincronizacion automatica entre este repo y `k8s-apps`.
 
 ## Relationship to the network project
 
