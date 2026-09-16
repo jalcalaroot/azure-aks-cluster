@@ -14,15 +14,20 @@
 #   - El certificado del webhook lo genera y rota el propio keda-operator
 #     (RBAC propio sobre el secret kedaorg-certs) - sin cert-manager, sin
 #     volumen problematico para Virtual Nodes (solo "secret", nada de PVC).
-
+#
+# Node pool real, NO Virtual Nodes (actualizado 2026-09-16) - version previa
+# de este archivo corria en Virtual Nodes (arriba). Al redesplegar el cluster
+# desde cero esta vez, ademas se confirmo algo mas serio que un problema de
+# scheduling: metrics-server nunca devuelve metricas de pods para NINGUN pod
+# en Virtual Nodes (confirmado repetidas veces contra
+# metrics.k8s.io/v1beta1, ver k8s-apps/CLAUDE.md) - el trigger cpu de KEDA
+# (usado por las apps de k8s-apps) depende 100% de esa API. Tener el propio
+# KEDA en Virtual Nodes no habria importado para eso (el problema es de las
+# apps objetivo, no del operator), pero mantenerlo en el node pool real, ya
+# usado por Argo CD, evita sumar una segunda superficie de riesgo de
+# scheduling (mismo criterio: menos patrones distintos que mantener).
 nodeSelector:
-  kubernetes.io/role: agent
-  type: virtual-kubelet
-tolerations:
-  - key: virtual-kubelet.io/provider
-    operator: Exists
-  - key: azure.com/aci
-    effect: NoSchedule
+  kubernetes.io/os: linux
 
 resources:
   operator:

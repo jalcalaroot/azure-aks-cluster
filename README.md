@@ -50,8 +50,8 @@ This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspac
 | Let's Encrypt certificates (x2, via ACME DNS-01) | One per public host (`aks.*`, `argocd.*`), each delivered to the cluster as its own Kubernetes TLS Secret | [Let's Encrypt](https://letsencrypt.org/how-it-works/) |
 | User Assigned Managed Identities (x2) | CI/CD identities for GitHub Actions, federated via OIDC — no stored secrets | [Managed identities overview](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/overview) |
 | Container Insights (`oms_agent`) | AKS-specific monitoring, forwarded to an existing Log Analytics Workspace | [Container insights](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview) |
-| Argo CD (Helm, `argocd` namespace) | GitOps controller — 7 components on the real node pool (ACI can't run this chart's pods, see CLAUDE.md); UI at `argocd.azure.jalcalaroot.com` | [argo-cd chart](https://github.com/argoproj/argo-helm) |
-| KEDA (Helm, `keda` namespace) | Event-driven pod autoscaling — all 3 components on Virtual Nodes; no `ScaledObject` configured yet | [KEDA docs](https://keda.sh/docs/latest/) |
+| Argo CD (Helm, `argocd` namespace) | GitOps controller — 7 components on the real node pool (ACI can't run this chart's pods, see CLAUDE.md); UI at `argocd.azure.jalcalaroot.com`. Manages 4 apps from [`k8s-apps`](https://github.com/jalcalaroot/k8s-apps) (`applicationset-aks.yaml` + `headlamp-application.yaml`) | [argo-cd chart](https://github.com/argoproj/argo-helm) |
+| KEDA (Helm, `keda` namespace) | Event-driven pod autoscaling — all 3 components on the **real node pool**, same reason as Argo CD (not Virtual Nodes, despite an earlier version of this doc saying otherwise). `cpu`-trigger `ScaledObject`s exist in `k8s-apps` but don't actually scale anything on Virtual Nodes — see CLAUDE.md | [KEDA docs](https://keda.sh/docs/latest/) |
 
 ## Design notes
 
@@ -144,9 +144,16 @@ terraform apply \
    helm repo add kedacore https://kedacore.github.io/charts
    helm install keda kedacore/keda --version 2.20.2 -n keda --create-namespace -f keda/values.yaml
    ```
-   Installed as base platform infrastructure — no `ScaledObject` configured yet, since there's no app with variable load to scale.
+   `ScaledObject`s live in [`k8s-apps`](https://github.com/jalcalaroot/k8s-apps) (podinfo/game-2048/headlamp) — see CLAUDE.md for why the `cpu` trigger doesn't actually scale anything for pods on Virtual Nodes.
+9. **Bootstrap `k8s-apps`** (tells the Argo CD just installed to start watching/syncing it — `metrics-server` ships by default on AKS, no separate install needed unlike EKS):
+   ```bash
+   curl -sL https://raw.githubusercontent.com/jalcalaroot/k8s-apps/main/bootstrap/applicationset-aks.yaml | kubectl apply -f -
+   curl -sL https://raw.githubusercontent.com/jalcalaroot/k8s-apps/main/bootstrap/headlamp-application.yaml | kubectl apply -f -
+   ```
 
 ```bash
+kubectl delete -f https://raw.githubusercontent.com/jalcalaroot/k8s-apps/main/bootstrap/applicationset-aks.yaml
+kubectl delete -f https://raw.githubusercontent.com/jalcalaroot/k8s-apps/main/bootstrap/headlamp-application.yaml
 helm uninstall keda -n keda
 kubectl delete ns keda
 helm uninstall argocd -n argocd

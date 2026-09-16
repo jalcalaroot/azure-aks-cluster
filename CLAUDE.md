@@ -116,6 +116,24 @@ Verificado contra el chart real (`kedacore/keda` 2.20.2) antes de asumirlo:
 Instalado como infraestructura base, sin ningun `ScaledObject`/`ScaledJob` configurado todavia - no
 hay ninguna app con carga variable real corriendo hoy que justifique uno.
 
+**Actualización (2026-09-16) - se movio al node pool real**: al redesplegar el cluster desde cero
+esta vez, el primer `helm install` fue un install liso (sin `keda/values.yaml`, mientras se
+resolvian otros errores mas urgentes) - termino en el node pool real por default, no en Virtual
+Nodes. En vez de revertirlo a Virtual Nodes para calzar con este archivo, se hizo lo opuesto:
+se actualizo `keda/values.yaml` (`nodeSelector: kubernetes.io/os: linux`, sin tolerations) para que
+la IaC describa lo que en efecto corre. Motivo real, no solo prolijidad: durante el mismo redeploy
+se confirmo que **metrics-server nunca devuelve metricas de ningun pod en Virtual Nodes**
+(`kubectl get --raw /apis/metrics.k8s.io/v1beta1/...` no encuentra el pod, repetido varias veces
+contra distintas apps - ver `k8s-apps/CLAUDE.md` para el detalle completo) - el trigger `cpu` de
+KEDA depende 100% de esa API. Correr el propio KEDA en Virtual Nodes no arregla eso (el problema
+es de los pods *objetivo*, no del operator), pero sumarlo ahi de todas formas seria una segunda
+superficie de riesgo de scheduling sin ningun beneficio real - se prefirio colocarlo junto a Argo
+CD en el node pool real.
+
+`helm upgrade keda kedacore/keda --version 2.20.2 -n keda -f keda/values.yaml` aplicado contra el
+cluster real para que el Helm release en si tambien calce con este archivo (no solo quedo
+documentado, se verifico con los 3 pods `Running` en el node pool real despues).
+
 ## Design decisions worth knowing before changing anything
 
 - **Virtual Nodes requires Azure CNI flat networking, not Overlay.** Confirmed against Microsoft's own docs ("use overlay when you don't need advanced features such as virtual nodes"). `aks.tf`'s `network_profile` deliberately omits `network_plugin_mode = "overlay"` and `pod_cidr` — every pod (real node and Virtual Nodes both) gets a real, routable VNet IP. This is why `snet-aks-virtual-nodes` (added in `jalcalaroot-azure-bootstrap`) is a full `/24`, not a small overlay-style tier.
