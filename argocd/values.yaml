@@ -14,17 +14,23 @@
 #     nada de PVC/hostPath, compatible con Virtual Nodes sin cambios.
 
 global:
-  # Mismo mecanismo que k8s/deployment.yaml (hello-world): fuerza cada
-  # componente de Argo CD a Virtual Nodes (ACI) en vez del nodo real -
-  # ninguno de los 8 workloads necesita hostNetwork/acceso al host.
+  # Corre en el node pool real, NO en Virtual Nodes (ACI) - a diferencia de
+  # hello-world. Encontrado en el primer install real contra este cluster:
+  # ACI (virtual-kubelet) rechaza cualquier pod que declare "args" sin
+  # "command" explicito - "ACI does not support providing args without
+  # specifying the command" - y casi todo el chart de argo-cd hace
+  # exactamente eso (confia en el ENTRYPOINT de la imagen, patron normal en
+  # cualquier nodo real, pero que ACI no soporta). Reescribir command+args
+  # component por component para cada imagen no es viable de mantener a
+  # traves de bumps de version del chart - se prefiere correr en el node
+  # pool real. No requiere pedir mas cuota de VM (eso solo aplica a crear
+  # una VM nueva o mas grande) - usa capacidad ya existente en los 2 nodos
+  # del system pool, que tienen margen de sobra para los ~1.4 vCPU/~2.3GB
+  # combinados de estos 8 workloads.
   nodeSelector:
-    kubernetes.io/role: agent
-    type: virtual-kubelet
-  tolerations:
-    - key: virtual-kubelet.io/provider
-      operator: Exists
-    - key: azure.com/aci
-      effect: NoSchedule
+    kubernetes.io/os: linux
+    kubernetes.azure.com/agentpool: system
+  tolerations: []
 
 # El chart no fija resources por default en NINGUN componente. ACI no tiene
 # overcommit (mismo gotcha que documenta CLAUDE.md para hello-world) -
@@ -62,11 +68,17 @@ redis:
     limits: { cpu: 100m, memory: 128Mi }
 
 # Job de una sola corrida (genera el secret de auth de redis) - clave de
-# primer nivel, NO redis.secretInit.
+# primer nivel, NO redis.secretInit. Ya corre en el node pool real via
+# global.nodeSelector (ver arriba) - originalmente se penso que este Job
+# en particular era el unico caso especial en Virtual Nodes (necesita
+# autenticarse contra la API de Kubernetes desde dentro del container,
+# algo que el runtime de virtual-kubelet/ACI no soporta bien - tampoco
+# soporta `kubectl exec`), pero resulto ser un problema mas general del
+# chart entero contra ACI (ver comentario de global.nodeSelector).
 redisSecretInit:
   resources:
-    requests: { cpu: 100m, memory: 64Mi }
-    limits: { cpu: 100m, memory: 64Mi }
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 100m, memory: 256Mi }
 
 dex:
   resources:
