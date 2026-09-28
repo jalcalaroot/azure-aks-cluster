@@ -2,6 +2,16 @@
 
 Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace, real node pool — see below), mirroring its role in `aws-eks-cluster`.
 
+## ACR migrado a Azure Verified Module, el cluster en si se queda crudo (2026-09-28)
+
+Decision del usuario: de aca en adelante, todo lo que se construya en Azure usa AVM donde exista un modulo real. `acr.tf` ahora usa `Azure/avm-res-containerregistry-registry/azurerm` - sin cambios de comportamiento (Basic SKU, admin user deshabilitado, mismo role assignment de AcrPull vía recurso crudo separado, ya que la variable `role_assignments` top-level de esta AVM no tiene ningun ejemplo de uso real en su doc).
+
+**`azurerm_kubernetes_cluster` (aks.tf) se queda como recurso crudo a proposito, investigado antes de decidir, no por default**: `Azure/avm-res-containerservice-managedcluster/azurerm` (la AVM oficial de AKS) no tiene absolutamente ningun soporte para `aci_connector_linux` (Virtual Nodes clasico) - grep completo de su doc (4684 lineas) sin un solo match para "ACI"/"virtual node"/"aci_connector". Confirmado contra la doc oficial de Microsoft que tampoco hay alternativa madura: "Virtual Nodes v2" sigue en preview, sin fecha de disponibilidad general, y tampoco tiene soporte en esta AVM. Como `default_node_pool`/`aci_connector_linux`/`ingress_application_gateway` viven todos dentro del MISMO recurso de Terraform (no se puede migrar "una parte" del cluster y dejar el resto crudo), la unica forma de no perder Virtual Nodes hoy es dejar el recurso completo sin tocar.
+
+**`app_gateway.tf` tambien se queda crudo, mismo criterio**: `Azure/avm-res-network-applicationgateway/azurerm` no tiene ningun mecanismo de `ignore_changes`/tolerancia a drift (confirmado con grep completo de sus 5058 lineas de doc - cero matches para "AGIC"/"ignore_changes"/"externally managed"). Este Application Gateway es "bring your own" para AGIC, que reconfigura listeners/backend pools/reglas en runtime - sin un mecanismo real para que la AVM ignore esos cambios dinamicos, migrarlo haria que cada `terraform apply` futuro pelee con lo que AGIC ya configuro. El propio Terraform no permite exponer `lifecycle.ignore_changes` de un recurso interno de un modulo hacia quien lo consume - limitacion real de Terraform, no de esta AVM en particular.
+
+`providers.tf` bajo de `~> 5.4` a `>= 4.81.0, < 5.0.0` (la AVM de ACR lo exige) - verificado antes de bajar que `node_provisioning_profile`/`aci_connector_linux` (usados en aks.tf, que sigue crudo) existen igual en el schema real de azurerm v4.81, no se asumio que "funciona igual" en la version vieja.
+
 ## Por que este cluster no puede ser 100% serverless (a diferencia de EKS)
 
 EKS corre 100% en Fargate, sin ningun node group. AKS no puede replicar eso: `default_node_pool`
