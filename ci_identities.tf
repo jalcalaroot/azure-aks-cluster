@@ -3,41 +3,26 @@
 # patron que azure-container-apps: "agent" (apply, push+schedule a
 # main) y "plan" (solo lectura, PRs), con RBAC acotado recurso por recurso
 # en vez de Contributor sobre un resource group compartido.
-data "azurerm_storage_account" "tfstate" {
-  name                = "sttfstatejalcalaroot"
+#
+# Los identity/federated_identity_credential YA NO se crean aca - viven en
+# el root separado ./ci (state propio, nunca se destruye junto con el
+# cluster). Ver CLAUDE.md, seccion "Identidades de CI en state propio", para
+# el porque. Este archivo solo referencia esas identidades via data source
+# para poder seguir otorgandoles RBAC sobre los recursos de ESTE root (que
+# si se destruyen/recrean con el ciclo de vida del proyecto).
+data "azurerm_user_assigned_identity" "ci_agent" {
+  name                = "aks-cluster-agent"
   resource_group_name = "jalcalaroot"
 }
 
-resource "azurerm_user_assigned_identity" "ci_agent" {
-  name                = "aks-cluster-agent"
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-  tags                = local.tags
-}
-
-resource "azurerm_user_assigned_identity" "ci_plan" {
+data "azurerm_user_assigned_identity" "ci_plan" {
   name                = "aks-cluster-plan"
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-  tags                = local.tags
+  resource_group_name = "jalcalaroot"
 }
 
-# Subject claims segun el formato ACTUAL de GitHub para este repo
-# (confirmado via `gh api repos/jalcalaroot/azure-aks-cluster/actions/oidc/customization/sub`).
-resource "azurerm_federated_identity_credential" "ci_agent_main" {
-  name                      = "github-main"
-  user_assigned_identity_id = azurerm_user_assigned_identity.ci_agent.id
-  issuer                    = "https://token.actions.githubusercontent.com"
-  audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "repo:jalcalaroot@22682982/azure-aks-cluster@1359405750:ref:refs/heads/main"
-}
-
-resource "azurerm_federated_identity_credential" "ci_plan_pr" {
-  name                      = "github-pull-request"
-  user_assigned_identity_id = azurerm_user_assigned_identity.ci_plan.id
-  issuer                    = "https://token.actions.githubusercontent.com"
-  audience                  = ["api://AzureADTokenExchange"]
-  subject                   = "repo:jalcalaroot@22682982/azure-aks-cluster@1359405750:pull_request"
+data "azurerm_storage_account" "tfstate" {
+  name                = "sttfstatejalcalaroot"
+  resource_group_name = "jalcalaroot"
 }
 
 # --------------------------------------------------------------------------
@@ -47,13 +32,13 @@ resource "azurerm_federated_identity_credential" "ci_plan_pr" {
 resource "azurerm_role_assignment" "ci_agent_rg_contributor" {
   scope                = azurerm_resource_group.this.id
   role_definition_name = "Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_rg_reader" {
   scope                = azurerm_resource_group.this.id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 # "Contributor" NO incluye Microsoft.Authorization/roleAssignments/write -
@@ -65,20 +50,20 @@ resource "azurerm_role_assignment" "ci_agent_acr_rbac_admin" {
   #checkov:skip=CKV2_CUSTOM_AZURE_1:RBAC Administrator es necesario aqui especificamente (ver comentario arriba: Contributor no incluye Microsoft.Authorization/roleAssignments/write), pero acotado al recurso ACR puntual, no a todo el resource group ni a la suscripcion - el agent solo puede otorgar accesos sobre ese recurso, no escalar mas alla de el.
   scope                = module.acr.resource_id
   role_definition_name = "Role Based Access Control Administrator"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 # DNS Zone existente - acotado a la zone especifica.
 resource "azurerm_role_assignment" "ci_agent_dns_zone_contributor" {
   scope                = data.azurerm_dns_zone.this.id
   role_definition_name = "DNS Zone Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_dns_zone_reader" {
   scope                = data.azurerm_dns_zone.this.id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 # Subnets especificos en la VNet compartida - el agent necesita poder
@@ -87,19 +72,19 @@ resource "azurerm_role_assignment" "ci_plan_dns_zone_reader" {
 resource "azurerm_role_assignment" "ci_agent_aks_subnet_network_contributor" {
   scope                = var.network_aks_subnet_id
   role_definition_name = "Network Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_agent_aks_virtual_nodes_subnet_network_contributor" {
   scope                = var.network_aks_virtual_nodes_subnet_id
   role_definition_name = "Network Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_agent_appgw_subnet_network_contributor" {
   scope                = var.network_appgw_subnet_id
   role_definition_name = "Network Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 # ci_plan tambien necesita poder LEER estos 3 role assignments del agent
@@ -111,19 +96,19 @@ resource "azurerm_role_assignment" "ci_agent_appgw_subnet_network_contributor" {
 resource "azurerm_role_assignment" "ci_plan_aks_subnet_network_reader" {
   scope                = var.network_aks_subnet_id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_aks_virtual_nodes_subnet_network_reader" {
   scope                = var.network_aks_virtual_nodes_subnet_id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_appgw_subnet_network_reader" {
   scope                = var.network_appgw_subnet_id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 # Refrescar el estado de azurerm_kubernetes_cluster.this en cada plan
@@ -134,7 +119,7 @@ resource "azurerm_role_assignment" "ci_plan_appgw_subnet_network_reader" {
 resource "azurerm_role_assignment" "ci_plan_cluster_user" {
   scope                = azurerm_kubernetes_cluster.this.id
   role_definition_name = "Azure Kubernetes Service Cluster User Role"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 # Backend remoto: Storage Blob Data Contributor (data plane, lease de
@@ -144,25 +129,25 @@ resource "azurerm_role_assignment" "ci_plan_cluster_user" {
 resource "azurerm_role_assignment" "ci_agent_state_write" {
   scope                = data.azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_state_write" {
   scope                = data.azurerm_storage_account.tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_agent_state_reader" {
   scope                = data.azurerm_storage_account.tfstate.id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_state_reader" {
   scope                = data.azurerm_storage_account.tfstate.id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
 # El cluster (oms_agent) necesita leer la shared key del Log Analytics
@@ -172,11 +157,11 @@ resource "azurerm_role_assignment" "ci_plan_state_reader" {
 resource "azurerm_role_assignment" "ci_agent_log_analytics_contributor" {
   scope                = var.network_log_analytics_workspace_id
   role_definition_name = "Log Analytics Contributor"
-  principal_id         = azurerm_user_assigned_identity.ci_agent.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_log_analytics_reader" {
   scope                = var.network_log_analytics_workspace_id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.ci_plan.principal_id
+  principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
