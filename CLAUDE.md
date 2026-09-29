@@ -103,7 +103,7 @@ nada todavia. `dex` (SSO, sin usar hoy) y `notifications` (sin canales configura
 de eso - se dejan prendidos por paridad 1:1 con `aws-eks-cluster`, pero el dato queda escrito para
 la proxima vez que se revise el costo del proyecto.
 
-## KEDA instalado (2026-09-12) - Virtual Nodes, sin cambios de Terraform
+## KEDA instalado (2026-09-12), sin cambios de Terraform - planeado para Virtual Nodes, termino en el node pool real (ver actualizacion 2026-09-16 mas abajo)
 
 Mismo mecanismo de scheduling que Argo CD (`global`... en este chart, `nodeSelector`/`tolerations`
 de nivel superior, ver `keda/values.yaml`) y misma razon: la cuota regional de 4 vCPU no se toca
