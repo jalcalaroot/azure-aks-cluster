@@ -57,6 +57,16 @@ Sizing de `argocd/values.yaml` es un punto de partida (controller 500m/1Gi, repo
 resto 100m/128Mi) - ajustar contra OOMKills o CPU throttling reales una vez desplegado, mismo
 criterio que el resto de este repo ("encontrado empiricamente, no leido de la doc" - ver mas abajo).
 
+**Ese ajuste paso de verdad en el redeploy del 2026-09-29**: `argocd-application-controller`
+(500m/1Gi) nunca arranco - `FailedScheduling`, "2 Insufficient cpu" en los 2 nodos
+`Standard_D2s_v7` (1900m allocatable cada uno). Con CoreDNS/kube-proxy/AGIC/ACI connector/
+oms_agent + el resto de componentes de Argo CD + KEDA ya corriendo, quedaban ~300m libres por
+nodo - ni el mas cargado de los dos alcanzaba para un pod de 500m, aunque la suma total del
+cluster (~600m libres) sonara suficiente a simple vista (un pod no puede repartirse entre dos
+nodos). Bajado a 250m/512Mi (mismo valor que `server`) - confirmado corriendo despues de
+`helm upgrade` + borrar el pod trabado (el `StatefulSet` no lo recreaba solo mientras seguia
+`Pending`, hubo que forzarlo).
+
 ## Segundo certificado + segundo host, mismo Application Gateway
 
 AGIC soporta multiples Ingress sobre un mismo Application Gateway de forma nativa (multi-site,
@@ -214,6 +224,14 @@ Fix de la trampa de arriba: `ci_agent`/`ci_plan` (`azurerm_user_assigned_identit
 **Ojo con reactivar el `schedule:` semanal (pausado arriba) despues de este fix**: antes, el cron fallaba de forma segura contra un cluster destruido porque no habia con que autenticarse. Ahora que las identidades son permanentes, un `terraform apply` disparado por el cron SI lograria autenticarse y, si el proyecto esta destruido, recrearia el cluster completo desde cero como efecto secundario de lo que deberia ser solo una renovacion de certificado - no reactivar el schedule sin pensar antes si eso es lo que se quiere.
 
 Mismo fix aplicado en paralelo a `aws-eks-cluster` y `azure-container-apps` (mismo problema, confirmado en ambos). `jalcalaroot-azure-bootstrap`/`jalcalaroot-aws-bootstrap` no lo necesitan - sus identidades ya viven en un repo que en si mismo nunca se destruye.
+
+## Redeploy real con ACR en AVM (2026-09-29)
+
+Primer `apply` real de este repo despues de la migracion de ACR a Azure Verified Module (`acr.tf`, ver seccion arriba) - 37 recursos, limpio, sin gotchas nuevos. Las 4 `network_*` subnet/log-analytics vars ahora vienen de [`azure-virtual-network`](https://github.com/jalcalaroot/azure-virtual-network) (proyecto standalone desde el mismo dia - ver su CLAUDE.md), no de `jalcalaroot-azure-bootstrap` como en redeploys anteriores - mismos valores de ARM ID de siempre, solo cambia de que repo se copian.
+
+Deploy completo verificado end-to-end, no solo el `terraform apply`: imagen de `hello-world` buildeada y pusheada a `acrakscluster.azurecr.io`, `acr-pull-secret` para el Virtual Node, TLS secrets de los 5 hosts, Argo CD (Helm) instalado, KEDA (Helm) instalado, `k8s-apps` bootstrapeado. Las 5 URLs publicas confirmadas con `curl` real (no solo un plan limpio) - ver seccion "Consumers"/README para el listado.
+
+**Gotcha real encontrado en este redeploy**: `argocd-application-controller` (500m/1Gi en `argocd/values.yaml`) no entraba en la capacidad real disponible - ver la nota actualizada en "Argo CD termino en el node pool real" arriba para el detalle completo. Bajado a 250m/512Mi.
 
 ## Consumers
 
