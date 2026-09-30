@@ -30,7 +30,7 @@ AKS cluster (managed control plane)
 
 Application Gateway is the only public entry point, serving all 5 hosts via AGIC's native multi-site support — one Ingress per host, no extra Application Gateway needed. hello-world and the 3 `k8s-apps` demo apps run on Virtual Nodes, no VM behind them, billed per second, scheduled there via `nodeSelector`/`tolerations` (see `k8s/deployment.yaml` and each app's `overlays/aks/patch-virtual-node.yaml` in `k8s-apps`), same mechanism an EKS Fargate profile uses to claim pods by selector. **Argo CD and KEDA run on the real node pool instead** — ACI/Virtual Nodes rejects any pod that declares `args` without an explicit `command` (relying on the image's own `ENTRYPOINT`, which is what almost the entire `argo-cd` chart does), found on the first real install; see CLAUDE.md. `metrics-server` also never returns pod metrics for anything on Virtual Nodes (confirmed repeatedly — see CLAUDE.md and `k8s-apps/CLAUDE.md`), so KEDA's `cpu`-trigger `ScaledObject`s don't actually scale the 3 Virtual Node apps, only `headlamp` (real node pool). The real node pool exists because AKS requires one, because Virtual Nodes can't run components needing `hostNetwork`/host access (CoreDNS, kube-proxy, AGIC, the ACI connector itself), and now also because Argo CD and KEDA need it — see CLAUDE.md for why this means AKS can't be as fully serverless as EKS.
 
-This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspace provisioned by a sibling network project; it does not create its own virtual network. Design rationale and implementation notes live in [CLAUDE.md](CLAUDE.md).
+This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspace provisioned by [`azure-virtual-network`](https://github.com/jalcalaroot/azure-virtual-network), a separate standalone Terraform project; it does not create its own virtual network. Design rationale and implementation notes live in [CLAUDE.md](CLAUDE.md).
 
 ## Resources deployed
 
@@ -39,15 +39,16 @@ This project consumes an **existing** VNet, DNS zone, and Log Analytics Workspac
 | Resource Group | Container for everything below, own lifecycle | [Manage resource groups](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-portal) |
 | AKS cluster | Real node pool (system components, 2 nodes by default) plus the Virtual Nodes add-on for the actual workload | [AKS overview](https://learn.microsoft.com/en-us/azure/aks/what-is-aks) |
 | Virtual Nodes (ACI connector) | Runs the hello-world pod as an ACI container group, no VM | [Virtual nodes](https://learn.microsoft.com/en-us/azure/aks/virtual-nodes) |
-| Azure Container Registry (Basic) | Hosts the `hello-world` image; admin user disabled | [ACR overview](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-intro) |
+| Azure Container Registry (Basic) | Hosts the `hello-world` image; admin user disabled; provisioned via the [`Azure/avm-res-containerregistry-registry`](https://registry.terraform.io/modules/Azure/avm-res-containerregistry-registry/azurerm/latest) Azure Verified Module (the cluster itself and Application Gateway stay raw resources on purpose — see CLAUDE.md) | [ACR overview](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-intro) |
 | Application Gateway (Standard_v2) + AGIC | Public entry point; AGIC reconfigures it automatically from Kubernetes `Ingress` resources | [AGIC overview](https://learn.microsoft.com/en-us/azure/application-gateway/ingress-controller-overview) |
 | Public IP (Standard) | Attached to the Application Gateway | [Public IP addresses](https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-addresses) |
 | Azure DNS Zone (existing, not created here) | Hosts the `A` record for the public hostname | [Azure DNS overview](https://learn.microsoft.com/en-us/azure/dns/dns-overview) |
 | Let's Encrypt certificates (x5, via ACME DNS-01) | One per public host (`aks.*`, `argocd.*`, plus the 3 `k8s-apps` demo apps), each delivered to the cluster as its own Kubernetes TLS Secret | [Let's Encrypt](https://letsencrypt.org/how-it-works/) |
-| User Assigned Managed Identities (x2) | CI/CD identities for GitHub Actions, federated via OIDC — no stored secrets | [Managed identities overview](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/overview) |
 | Container Insights (`oms_agent`) | AKS-specific monitoring, forwarded to an existing Log Analytics Workspace | [Container insights](https://learn.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview) |
 | Argo CD (Helm, `argocd` namespace) | GitOps controller — 7 components on the real node pool (ACI can't run this chart's pods, see CLAUDE.md); UI at `argocd.azure.jalcalaroot.com`. Manages 4 apps from [`k8s-apps`](https://github.com/jalcalaroot/k8s-apps) (`applicationset-aks.yaml` + `headlamp-application.yaml`) | [argo-cd chart](https://github.com/argoproj/argo-helm) |
 | KEDA (Helm, `keda` namespace) | Event-driven pod autoscaling — all 3 components on the **real node pool**, same reason as Argo CD (not Virtual Nodes, despite an earlier version of this doc saying otherwise). `cpu`-trigger `ScaledObject`s exist in `k8s-apps` but don't actually scale anything on Virtual Nodes — see CLAUDE.md | [KEDA docs](https://keda.sh/docs/latest/) |
+
+Not in this list, and not destroyed with the rest of this project: the two CI/CD managed identities (`aks-cluster-agent`, `aks-cluster-plan`) live in their own persistent Terraform root, [`./ci`](./ci) — see [CI/CD](#cicd) below.
 
 ## Design notes
 
@@ -213,10 +214,12 @@ GitHub Actions, authenticated to Azure via OIDC (Workload Identity Federation) �
 | Workflow | Trigger | Identity | What it does |
 |---|---|---|---|
 | `terraform-plan.yml` | Pull request | `aks-cluster-plan` (read-only) | `fmt -check`, `validate`, tflint, Checkov + [custom RBAC rules](https://github.com/jalcalaroot/johan-cloud-policies) (blocking), `plan`, [Checkov plan scan](https://github.com/jalcalaroot/gha-checkov-plan-scan) (second pass against the resolved plan, not blocking — see CLAUDE.md), posts the plan as a PR comment |
-| `terraform-apply.yml` | Push to `main`, and weekly on a schedule | `aks-cluster-agent` (scoped to this project's resources only) | `plan` + `apply` |
+| `terraform-apply.yml` | Push to `main`. Weekly schedule (cert renewal) currently **paused** — see below | `aks-cluster-agent` (scoped to this project's resources only) | `plan` + `apply` |
 | `gitleaks.yml` | PR / push to `main` | — | Secret scanning |
 
-**The weekly schedule only renews the certificate in Let's Encrypt — it does not update the cluster.** The cert isn't read live by anything; it's baked into a Kubernetes Secret that a human created once via `kubectl`. After a renewal, re-run the `kubectl create secret tls ... --dry-run=client -o yaml | kubectl apply -f -` step manually (see CLAUDE.md) for AGIC to actually pick up the new certificate.
+**The weekly schedule only renews the certificate in Let's Encrypt — it does not update the cluster.** The cert isn't read live by anything; it's baked into a Kubernetes Secret that a human created once via `kubectl`. After a renewal, re-run the `kubectl create secret tls ... --dry-run=client -o yaml | kubectl apply -f -` step manually (see CLAUDE.md) for AGIC to actually pick up the new certificate. The `schedule:` trigger is currently commented out in `terraform-apply.yml` — re-enable deliberately, not by default, since a now-permanent CI identity means a cron-triggered apply against a torn-down cluster would fully recreate it as a side effect, not just fail safely (see CLAUDE.md's "Identidades de CI en state propio").
+
+`aks-cluster-agent`/`aks-cluster-plan` are **persistent**: they live in their own Terraform root ([`./ci`](./ci), state `aks-cluster-ci/terraform.tfstate`) in the permanent `jalcalaroot` resource group, not in this project's own destroyable state. Destroying/redeploying this cluster never breaks CI. That root is applied manually, once, and rarely touched again — see CLAUDE.md.
 
 Both identities are scoped resource-by-resource, never blanket `Contributor` over a shared resource group — see CLAUDE.md for the full RBAC breakdown, including a permission gap (`Role Based Access Control Administrator` on the ACR) required for the agent to grant `AcrPull` to the cluster's kubelet identity.
 
@@ -224,8 +227,18 @@ Required GitHub repository variables (Settings → Secrets and variables → Act
 
 ## Cost
 
-Main ongoing costs: AKS control plane (free on the Free SKU), the real node(s), Virtual Nodes (billed per second the pod actually runs), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. hello-world alone is effectively free at this scale. Argo CD's 7 components (the 8th, `redisSecretInit`, is a one-shot Job) run 24/7 on the real node pool instead of Virtual Nodes (see CLAUDE.md) — at roughly 1.4 vCPU / 2.3 GB combined (see `argocd/values.yaml`'s resource requests) this is comfortably within the 2 already-provisioned `Standard_D2s_v7` nodes' spare capacity, so it's near-zero marginal cost rather than a separate Virtual-Nodes line item. `dex` and `notifications` (unused today) are kept enabled for parity with `aws-eks-cluster`. KEDA adds a further ~300m vCPU / ~384 MB combined (see `keda/values.yaml`) on Virtual Nodes — on the order of **US$10-12/month**, idle with no `ScaledObject` configured. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
+Main ongoing costs: AKS control plane (free on the Free SKU), the real node(s), Virtual Nodes (billed per second the pod actually runs), Application Gateway (hourly + capacity units) and its Public IP, ACR Basic (flat monthly), DNS queries, incremental Log Analytics ingestion. hello-world alone is effectively free at this scale. Argo CD's 7 components (the 8th, `redisSecretInit`, is a one-shot Job) run 24/7 on the real node pool instead of Virtual Nodes (see CLAUDE.md) — at roughly 1.4 vCPU / 2.3 GB combined (see `argocd/values.yaml`'s resource requests) this is comfortably within the 2 already-provisioned `Standard_D2s_v7` nodes' spare capacity, so it's near-zero marginal cost rather than a separate Virtual-Nodes line item. `dex` and `notifications` (unused today) are kept enabled for parity with `aws-eks-cluster`. KEDA also runs on the **real node pool**, not Virtual Nodes (see CLAUDE.md) — at ~300m vCPU / ~384 MB combined (see `keda/values.yaml`) it's comfortably within the same already-provisioned node capacity as Argo CD, so it's near-zero marginal cost too, not a separate Virtual-Nodes line item. Estimate with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
 
 ## Not covered
 
 WAF on Application Gateway, Azure AD RBAC integration for the cluster, cluster/node autoscaling, pod autoscaling (KEDA installed but no `ScaledObject` configured), multi-region, network policies, automated cluster-side certificate rotation.
+
+## Status
+
+This environment is deployed on demand rather than kept running permanently. **Currently torn down (2026-09-29)**: no live demo URLs, and `terraform-apply.yml`'s triggers are `push`-to-`main` plus `workflow_dispatch` only (weekly schedule paused — see [CI/CD](#cicd)).
+
+Changelog:
+- **2026-09-28** — ACR migrated to the `Azure/avm-res-containerregistry-registry` Azure Verified Module; the AKS cluster and Application Gateway deliberately stayed raw resources (neither has a usable AVM equivalent today — see CLAUDE.md for the investigation). Provider constraint downgraded to `>= 4.81.0, < 5.0.0` for AVM compatibility.
+- **2026-09-28** — CI identities (`aks-cluster-agent`, `aks-cluster-plan`) moved to their own persistent Terraform root (`./ci`), fixing the recurring issue where tearing this cluster down also broke CI/weekly-cron authentication until the next redeploy.
+- **2026-09-29** — Full redeploy on the AVM-based ACR, network dependency switched from `jalcalaroot-azure-bootstrap` to the now-standalone `azure-virtual-network`; Argo CD's `argocd-application-controller` CPU request lowered (500m → 250m) after a real scheduling failure — see CLAUDE.md.
+- **2026-09-29** — Cluster torn down again (deliberately left down per current instructions); the network dependency (`azure-virtual-network`) torn down around the same time.

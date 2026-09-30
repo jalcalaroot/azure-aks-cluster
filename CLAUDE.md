@@ -2,6 +2,16 @@
 
 Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace, real node pool — see below), mirroring its role in `aws-eks-cluster`.
 
+## ACR migrado a Azure Verified Module, el cluster en si se queda crudo (2026-09-28)
+
+Decision del usuario: de aca en adelante, todo lo que se construya en Azure usa AVM donde exista un modulo real. `acr.tf` ahora usa `Azure/avm-res-containerregistry-registry/azurerm` - sin cambios de comportamiento (Basic SKU, admin user deshabilitado, mismo role assignment de AcrPull vía recurso crudo separado, ya que la variable `role_assignments` top-level de esta AVM no tiene ningun ejemplo de uso real en su doc).
+
+**`azurerm_kubernetes_cluster` (aks.tf) se queda como recurso crudo a proposito, investigado antes de decidir, no por default**: `Azure/avm-res-containerservice-managedcluster/azurerm` (la AVM oficial de AKS) no tiene absolutamente ningun soporte para `aci_connector_linux` (Virtual Nodes clasico) - grep completo de su doc (4684 lineas) sin un solo match para "ACI"/"virtual node"/"aci_connector". Confirmado contra la doc oficial de Microsoft que tampoco hay alternativa madura: "Virtual Nodes v2" sigue en preview, sin fecha de disponibilidad general, y tampoco tiene soporte en esta AVM. Como `default_node_pool`/`aci_connector_linux`/`ingress_application_gateway` viven todos dentro del MISMO recurso de Terraform (no se puede migrar "una parte" del cluster y dejar el resto crudo), la unica forma de no perder Virtual Nodes hoy es dejar el recurso completo sin tocar.
+
+**`app_gateway.tf` tambien se queda crudo, mismo criterio**: `Azure/avm-res-network-applicationgateway/azurerm` no tiene ningun mecanismo de `ignore_changes`/tolerancia a drift (confirmado con grep completo de sus 5058 lineas de doc - cero matches para "AGIC"/"ignore_changes"/"externally managed"). Este Application Gateway es "bring your own" para AGIC, que reconfigura listeners/backend pools/reglas en runtime - sin un mecanismo real para que la AVM ignore esos cambios dinamicos, migrarlo haria que cada `terraform apply` futuro pelee con lo que AGIC ya configuro. El propio Terraform no permite exponer `lifecycle.ignore_changes` de un recurso interno de un modulo hacia quien lo consume - limitacion real de Terraform, no de esta AVM en particular.
+
+`providers.tf` bajo de `~> 5.4` a `>= 4.81.0, < 5.0.0` (la AVM de ACR lo exige) - verificado antes de bajar que `node_provisioning_profile`/`aci_connector_linux` (usados en aks.tf, que sigue crudo) existen igual en el schema real de azurerm v4.81, no se asumio que "funciona igual" en la version vieja.
+
 ## Por que este cluster no puede ser 100% serverless (a diferencia de EKS)
 
 EKS corre 100% en Fargate, sin ningun node group. AKS no puede replicar eso: `default_node_pool`
@@ -46,6 +56,16 @@ no hace dano dejarlo así.
 Sizing de `argocd/values.yaml` es un punto de partida (controller 500m/1Gi, repoServer 250m/512Mi,
 resto 100m/128Mi) - ajustar contra OOMKills o CPU throttling reales una vez desplegado, mismo
 criterio que el resto de este repo ("encontrado empiricamente, no leido de la doc" - ver mas abajo).
+
+**Ese ajuste paso de verdad en el redeploy del 2026-09-29**: `argocd-application-controller`
+(500m/1Gi) nunca arranco - `FailedScheduling`, "2 Insufficient cpu" en los 2 nodos
+`Standard_D2s_v7` (1900m allocatable cada uno). Con CoreDNS/kube-proxy/AGIC/ACI connector/
+oms_agent + el resto de componentes de Argo CD + KEDA ya corriendo, quedaban ~300m libres por
+nodo - ni el mas cargado de los dos alcanzaba para un pod de 500m, aunque la suma total del
+cluster (~600m libres) sonara suficiente a simple vista (un pod no puede repartirse entre dos
+nodos). Bajado a 250m/512Mi (mismo valor que `server`) - confirmado corriendo despues de
+`helm upgrade` + borrar el pod trabado (el `StatefulSet` no lo recreaba solo mientras seguia
+`Pending`, hubo que forzarlo).
 
 ## Segundo certificado + segundo host, mismo Application Gateway
 
@@ -93,7 +113,7 @@ nada todavia. `dex` (SSO, sin usar hoy) y `notifications` (sin canales configura
 de eso - se dejan prendidos por paridad 1:1 con `aws-eks-cluster`, pero el dato queda escrito para
 la proxima vez que se revise el costo del proyecto.
 
-## KEDA instalado (2026-09-12) - Virtual Nodes, sin cambios de Terraform
+## KEDA instalado (2026-09-12), sin cambios de Terraform - planeado para Virtual Nodes, termino en el node pool real (ver actualizacion 2026-09-16 mas abajo)
 
 Mismo mecanismo de scheduling que Argo CD (`global`... en este chart, `nodeSelector`/`tolerations`
 de nivel superior, ver `keda/values.yaml`) y misma razon: la cuota regional de 4 vCPU no se toca
@@ -136,13 +156,13 @@ documentado, se verifico con los 3 pods `Running` en el node pool real despues).
 
 ## Design decisions worth knowing before changing anything
 
-- **Virtual Nodes requires Azure CNI flat networking, not Overlay.** Confirmed against Microsoft's own docs ("use overlay when you don't need advanced features such as virtual nodes"). `aks.tf`'s `network_profile` deliberately omits `network_plugin_mode = "overlay"` and `pod_cidr` — every pod (real node and Virtual Nodes both) gets a real, routable VNet IP. This is why `snet-aks-virtual-nodes` (added in `jalcalaroot-azure-bootstrap`) is a full `/24`, not a small overlay-style tier.
+- **Virtual Nodes requires Azure CNI flat networking, not Overlay.** Confirmed against Microsoft's own docs ("use overlay when you don't need advanced features such as virtual nodes"). `aks.tf`'s `network_profile` deliberately omits `network_plugin_mode = "overlay"` and `pod_cidr` — every pod (real node and Virtual Nodes both) gets a real, routable VNet IP. This is why `snet-aks-virtual-nodes` (added in [`azure-virtual-network`](https://github.com/jalcalaroot/azure-virtual-network), the standalone network project — historically added in `jalcalaroot-azure-bootstrap` before the 2026-09-29 split, see "Relationship to the network project" below) is a full `/24`, not a small overlay-style tier.
 - **Two separate subnets, both required.** `snet-aks` (real node pool) and `snet-aks-virtual-nodes` (delegated to `Microsoft.ContainerInstance/containerGroups`, for the ACI-backed pods) can't be the same subnet — Virtual Nodes needs its own dedicated, delegated subnet by design.
 - **No Key Vault.** Unlike `azure-container-apps`, AGIC doesn't read TLS certs from Key Vault — it reads a Kubernetes `Secret` referenced in the `Ingress` resource. The ACME certificate is exposed as sensitive Terraform outputs (`certificate_pem`, `certificate_private_key_pem`) and turned into a K8s Secret via a documented manual `kubectl create secret tls` step.
 - **`acme_certificate` needs `common_name`, not `certificate_request_pem`.** Same gotcha as `azure-container-apps`: `certificate_pem`/`private_key_pem` only come back populated when the resource generates its own key from `common_name` — an external CSR leaves them empty.
 - **Application Gateway is "bring your own," with a placeholder config.** Terraform requires at least one valid `backend_address_pool`/`http_listener`/`request_routing_rule` to create the resource at all — these are throwaway placeholders that AGIC overwrites the moment the first `Ingress` is applied. `lifecycle.ignore_changes` on `azurerm_application_gateway.this` covers every block AGIC touches, so subsequent `terraform apply` runs don't fight AGIC's live changes and try to revert them.
 - **`only_critical_addons_enabled` must stay unset on the default node pool.** Setting it is a known way to break AGIC — the AGIC pod is classified as a "non-critical addon" and fails to start if that flag is on. Don't add it as a "hardening" measure without re-checking this.
-- **`node_provisioning_profile { mode = "Manual" }` is required by azurerm >= 5.x**, even though we don't use Node Autoprovisioning here — the provider errors at plan time without at least one `node_provisioning_profile` block present.
+- **`node_provisioning_profile { mode = "Manual" }` is required by azurerm >= 5.x** (confirmed still present/required in the 4.81.x schema this repo is now pinned to, per the AVM-driven provider downgrade above), even though we don't use Node Autoprovisioning here — the provider errors at plan time without at least one `node_provisioning_profile` block present.
 - **Kubernetes manifests (`k8s/*.yaml`) are applied manually via `kubectl`, not Terraform-managed.** Consistent with how `azure-container-apps` treats the Docker image build/push — Terraform's job is the infra, not the app deployment. The `<ACR_LOGIN_SERVER>` and `<FQDN>` placeholders in the YAML need substituting before `kubectl apply` (see README).
 - **The hello-world Deployment needs explicit `nodeSelector` + `tolerations`** (`kubernetes.io/role: agent`, `type: virtual-kubelet`, tolerate `virtual-kubelet.io/provider`) to actually land on the Virtual Node. Without these, the scheduler puts it on the real "system" node like any other pod — Virtual Nodes never claims pods automatically the way it might sound.
 - **`aks.tf`'s `network_profile` needs an explicit `service_cidr`/`dns_service_ip` outside the VNet's range.** AKS defaults to `10.0.0.0/16` for the service CIDR, which collided head-on with `vnet-jalcalaroot` (also `10.0.0.0/16`) — `ServiceCidrOverlapExistingSubnetsCidr` at apply time. Set to `172.16.0.0/16` (purely virtual, never routed on the VNet, so any non-overlapping range works).
@@ -183,7 +203,7 @@ Two dedicated OIDC identities (`ci_identities.tf`), same pattern as `azure-conta
 - **The static (blocking) Checkov step also loads custom IAM/RBAC rules** via [`jalcalaroot/johan-cloud-policies`](https://github.com/jalcalaroot/johan-cloud-policies) (`external_checks_dirs`) - house rules the built-in checks don't cover: no `azurerm_role_assignment` grants `Owner`/`User Access Administrator`/`Role Based Access Control Administrator` (`Contributor` deliberately excluded - it can't grant access to anyone), none is scoped directly to a subscription except a small Policy/Cost Management allowlist, and every taggable resource has `Owner`/`Environment` tags. `ci_agent_acr_rbac_admin` above trips the privileged-role check on purpose - it's real RBAC Administrator, just scoped to one resource - and carries an inline `#checkov:skip` with this same justification. The plan-scan step (below) also loads `custom_policies/plan_only/azure` - a management-group-scope check that only evaluates correctly against a resolved plan, not static HCL (verified by hand: the static scan sees the unresolved `scope` reference, never the ARM ID).
 - **This repo's tags used to be in Spanish** (`ambiente`/`propietario`/`proyecto`) while the rest of the account uses English - renamed to `Environment`/`Owner`/`Project` (2026-09-15) so the tag check above could actually verify what was already there, instead of false-flagging it as untagged.
 
-## Cluster destroyed: CI stays broken until redeploy (found 2026-09-15)
+## Cluster destroyed: CI stays broken until redeploy (found 2026-09-15, fixed 2026-09-28 - see "Identidades de CI en state propio" below for what's actually true today)
 
 `aks-cluster-agent`/`aks-cluster-plan` (`ci_identities.tf`) live in the **same** Terraform state as the cluster. When the cluster is torn down to avoid paying while idle, those two identities go with it - confirmed with `az identity list`/`az ad app show`: neither `aks-cluster-ci-plan` nor its underlying app registration exist right now.
 
@@ -192,6 +212,26 @@ Consequence: **every PR's CI stays red** until someone redeploys - Azure login f
 Same bootstrapping trap as `aws-eks-cluster`, distinct from `jalcalaroot-azure-bootstrap` (that repo's CI identities live in their own persistent state, so it can keep planning even with the network/cluster torn down). Not fixed here - to plan against this repo again, the identities (or the whole cluster) need to be recreated with broad local credentials first, not via the pipeline. Documented for whenever that redeploy happens, not treated as a code bug to fix today.
 
 **Recurring instance, 2026-09-16 teardown**: same failure mode, but this time it kept generating **weekly** noise instead of just failing PR checks. `terraform-apply.yml` has a `schedule: cron: "0 6 * * 1"` trigger (weekly, to renew the Let's Encrypt cert - see "Certificate renewal" below) that fired and failed the same `AADSTS700016` way every Monday (confirmed 2026-09-21 and 2026-09-28) with nothing to renew and no identity to authenticate as. Failing safely - it never got past the login step, so `terraform plan`/`apply` never ran and nothing was touched or recreated. Commented out the `schedule:` block (not `push:`, which stays active) rather than disabling the workflow outright, so a real push-triggered apply still works once the cluster and its CI identities exist again. Re-enable by uncommenting when redeploying.
+
+## Identidades de CI en state propio (fix real, 2026-09-28)
+
+Fix de la trampa de arriba: `ci_agent`/`ci_plan` (`azurerm_user_assigned_identity` + sus `azurerm_federated_identity_credential`) se movieron a un root de Terraform separado, [`./ci`](./ci) - state propio (`aks-cluster-ci/terraform.tfstate`), viven en el resource group compartido `jalcalaroot` (el mismo que ya aloja el storage account de tfstate, nunca se destruye), no en `rg-aks-cluster`. Este proyecto puede destruirse y recrearse cuantas veces haga falta sin que las identidades de CI se vean afectadas - `ARM_CLIENT_ID_AGENT`/`ARM_CLIENT_ID_PLAN` (GitHub variables) se configuran una sola vez y quedan validos para siempre, salvo que alguien borre `./ci` explicitamente.
+
+`ci_identities.tf` (en el root principal) ya NO crea las identidades - las referencia via `data "azurerm_user_assigned_identity"` (por nombre/RG, no por ID de recurso) para poder seguir otorgandoles los `azurerm_role_assignment` de RBAC sobre los recursos de ESTE root, que si se destruyen/recrean con el ciclo de vida normal del proyecto. Confirmado con un `terraform plan` real contra el proyecto ya destruido (37 to add, 0 to change, 0 destroy) - las data sources resuelven bien apenas `./ci` esta aplicado, sin importar el estado del resto del repo.
+
+**Aplicar `./ci` es un paso manual, no un workflow de CI** - se hace una sola vez (o cuando se re-crea desde cero tras borrar el resource group `jalcalaroot` entero, escenario que no deberia pasar nunca) con credenciales locales amplias, igual que el primer `apply` de cualquier proyecto nuevo. El bootstrapping de la PRIMERA vez que se crea `rg-aks-cluster` desde cero sigue necesitando credenciales locales igual que antes (el agent no tiene permiso a nivel de subscription para crear resource groups) - esto no cambio, solo se elimino el problema de las identidades desapareciendo entre un teardown y el siguiente.
+
+**Ojo con reactivar el `schedule:` semanal (pausado arriba) despues de este fix**: antes, el cron fallaba de forma segura contra un cluster destruido porque no habia con que autenticarse. Ahora que las identidades son permanentes, un `terraform apply` disparado por el cron SI lograria autenticarse y, si el proyecto esta destruido, recrearia el cluster completo desde cero como efecto secundario de lo que deberia ser solo una renovacion de certificado - no reactivar el schedule sin pensar antes si eso es lo que se quiere.
+
+Mismo fix aplicado en paralelo a `aws-eks-cluster` y `azure-container-apps` (mismo problema, confirmado en ambos). `jalcalaroot-azure-bootstrap`/`jalcalaroot-aws-bootstrap` no lo necesitan - sus identidades ya viven en un repo que en si mismo nunca se destruye.
+
+## Redeploy real con ACR en AVM (2026-09-29)
+
+Primer `apply` real de este repo despues de la migracion de ACR a Azure Verified Module (`acr.tf`, ver seccion arriba) - 37 recursos, limpio, sin gotchas nuevos. Las 4 `network_*` subnet/log-analytics vars ahora vienen de [`azure-virtual-network`](https://github.com/jalcalaroot/azure-virtual-network) (proyecto standalone desde el mismo dia - ver su CLAUDE.md), no de `jalcalaroot-azure-bootstrap` como en redeploys anteriores - mismos valores de ARM ID de siempre, solo cambia de que repo se copian.
+
+Deploy completo verificado end-to-end, no solo el `terraform apply`: imagen de `hello-world` buildeada y pusheada a `acrakscluster.azurecr.io`, `acr-pull-secret` para el Virtual Node, TLS secrets de los 5 hosts, Argo CD (Helm) instalado, KEDA (Helm) instalado, `k8s-apps` bootstrapeado. Las 5 URLs publicas confirmadas con `curl` real (no solo un plan limpio) - ver seccion "Consumers"/README para el listado.
+
+**Gotcha real encontrado en este redeploy**: `argocd-application-controller` (500m/1Gi en `argocd/values.yaml`) no entraba en la capacidad real disponible - ver la nota actualizada en "Argo CD termino en el node pool real" arriba para el detalle completo. Bajado a 250m/512Mi.
 
 ## Consumers
 
@@ -207,4 +247,6 @@ Mismo aviso que en `aws-eks-cluster/CLAUDE.md`: si un cert se recrea, el TLS Sec
 
 ## Relationship to the network project
 
-Reads (copied values, no `terraform_remote_state`): `network_aks_subnet_id`, `network_aks_virtual_nodes_subnet_id`, `network_appgw_subnet_id`, `network_log_analytics_workspace_id`. The virtual-nodes subnet doesn't exist in the versioned network module — it was added directly to the consuming environment's root module (same approach as the Container Apps subnet), to avoid bumping that module's version for a project-specific addition.
+The real network (`vnet-jalcalaroot`) is provisioned by [`azure-virtual-network`](https://github.com/jalcalaroot/azure-virtual-network) — a standalone Terraform project since 2026-09-29 (own backend, own CI/CD, own persistent CI identities), not a module called from `jalcalaroot-azure-bootstrap`. **History, for context** (NOT the current architecture): until 2026-09-05 the network lived as a versioned module called from `jalcalaroot-azure-bootstrap/terraform/environments/dev`, and `snet-aks-virtual-nodes` didn't exist in that versioned module — it was added directly to the consuming environment's root (same approach as the Container Apps subnet at the time), to avoid bumping the module's version for a project-specific addition. That whole arrangement is gone: on 2026-09-29 the network was pulled out into `azure-virtual-network` as its own standalone project, and `snet-aks-virtual-nodes` is now just one entry in that repo's own `subnets` map — see "Redeploy real con ACR en AVM" above.
+
+Reads (copied values, no `terraform_remote_state`): `network_aks_subnet_id`, `network_aks_virtual_nodes_subnet_id`, `network_appgw_subnet_id`, `network_log_analytics_workspace_id` — all sourced from `azure-virtual-network`'s outputs today.
