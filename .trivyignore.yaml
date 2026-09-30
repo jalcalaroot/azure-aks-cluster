@@ -1,0 +1,10 @@
+vulnerabilities:
+  - id: CVE-2026-93990
+    statement: >-
+      HIGH in libexpat (nginx:alpine base layer). Fix (2.8.5-r0) exists
+      upstream but hadn't been republished into this image's Alpine package
+      repo as of 2026-09-30 (verified with a fresh `docker pull`, still
+      2.8.4-r0) - nothing in this repo can act on it. Re-check by removing
+      this entry once it expires; if Alpine has shipped the fix by then a
+      fresh build will pick it up automatically.
+    expired_at: 2026-10-31
