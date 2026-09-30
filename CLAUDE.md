@@ -1,6 +1,10 @@
 # azure-aks-cluster
 
-Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace, real node pool — see below), mirroring its role in `aws-eks-cluster`.
+Hello-world container on AKS, scheduled on a Virtual Node (ACI-backed — the AKS homolog of an EKS Fargate profile), exposed via AGIC with a Let's Encrypt cert, image in a dedicated ACR, monitored via Container Insights into an existing Log Analytics Workspace. Also hosts Argo CD (Helm, `argocd` namespace, real node pool — see below).
+
+## README structure (standard across all `jalcalaroot` Azure repos, 2026-09-30)
+
+README.md is a presentation page, not a design doc — exactly 7 sections, in this order: **Architecture** (diagram), **Resources deployed** (table: Resource | Purpose | Docs, one real Azure-docs link per row), **Prerequisites**, **Usage** (concise, commands over prose), **Configuration**, **Outputs**, **CI/CD**. Nothing else — no Cost, Status, Design notes, or changelog sections, and no cross-repo references to other cloud accounts' projects (don't expose the AWS side's footprint from an Azure repo, or vice versa). All narrative — rationale, history, gotchas, incidents — belongs here in CLAUDE.md instead, linked from the README's closing line.
 
 ## ACR migrado a Azure Verified Module, el cluster en si se queda crudo (2026-09-28)
 
