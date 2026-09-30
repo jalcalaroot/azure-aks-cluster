@@ -4,6 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # azurerm pinned to < 5.0.0 on purpose (providers.tf) - required by
+      # the ACR Azure Verified Module, which doesn't support azurerm v5.x
+      # yet. Without this, Dependabot keeps proposing a major bump that
+      # silently rewrites that pin.
+      - dependency-name: "hashicorp/azurerm"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
