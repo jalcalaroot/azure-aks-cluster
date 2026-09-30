@@ -38,9 +38,17 @@ global:
 # ContainerLimitGreaterThanContainerGroupTotalRequest al crear el container
 # group. Sizing inicial, a ajustar contra el deploy real (ver CLAUDE.md).
 controller:
+  # Bajado de 500m/1Gi a 250m/512Mi el 2026-09-29: el sizing original no
+  # entraba en la capacidad real disponible del node pool en el redeploy de
+  # hoy - cada uno de los 2 nodos Standard_D2s_v7 (1900m allocatable) tenia
+  # solo ~300m libres despues de CoreDNS/kube-proxy/AGIC/ACI connector/
+  # oms_agent + el resto de componentes de Argo CD + KEDA, y 500m no entraba
+  # en ninguno de los dos individualmente (FailedScheduling: "2 Insufficient
+  # cpu"). Confirmado contra el deploy real, no una estimacion - exactamente
+  # el "ajustar contra la realidad" que el comentario de abajo ya anticipaba.
   resources:
-    requests: { cpu: 500m, memory: 1Gi }
-    limits: { cpu: 500m, memory: 1Gi }
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: 250m, memory: 512Mi }
 
 server:
   resources:

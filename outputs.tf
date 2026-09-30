@@ -8,7 +8,7 @@ output "app_gateway_public_ip" {
 }
 
 output "acr_login_server" {
-  value = azurerm_container_registry.this.login_server
+  value = module.acr.login_server
 }
 
 output "cluster_name" {

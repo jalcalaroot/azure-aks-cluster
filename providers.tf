@@ -2,9 +2,16 @@ terraform {
   required_version = ">= 1.5.0"
 
   required_providers {
+    # Bajado de ~> 5.4 a >= 4.81.0, < 5.0.0 el 2026-09-28 al migrar acr.tf a
+    # Azure/avm-res-containerregistry-registry/azurerm (pide exactamente ese
+    # rango). azurerm_kubernetes_cluster/aci_connector_linux/
+    # node_provisioning_profile (usados en aks.tf, que se queda crudo a
+    # proposito - Virtual Nodes no tiene AVM viable, ver CLAUDE.md) se
+    # confirmaron presentes en el schema real de v4.81 antes de bajar esto,
+    # no se asumio que "funciona igual".
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 5.4"
+      version = ">= 4.81.0, < 5.0.0"
     }
     acme = {
       source  = "vancluever/acme"
