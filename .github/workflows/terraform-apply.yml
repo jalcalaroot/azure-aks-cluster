@@ -1,11 +1,21 @@
 name: Terraform Apply
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "*.tf"
-      - ".github/workflows/terraform-apply.yml"
+  # El cluster (y su VNet) estan destruidos (ver CLAUDE.md "Current status
+  # (2026-09-29)") y el state de este root esta vacio. Con push: activo,
+  # cualquier merge a main que toque un *.tf (como el propio cambio de
+  # ACR a AVM/identidades persistentes) dispararia un apply automatico e
+  # intentaria recrear el cluster completo desde cero sin que nadie lo
+  # pidiera - la identidad de CI es permanente desde el fix de
+  # "Identidades de CI en state propio", asi que SI lograria autenticar.
+  # Pausado a proposito por el mismo motivo que el schedule de abajo.
+  # Descomentar ambos juntos al redesplegar de verdad.
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "*.tf"
+  #     - ".github/workflows/terraform-apply.yml"
+  workflow_dispatch: {}
   # schedule: (pausado 2026-09-28 - ver CLAUDE.md "Dev VNet"/cluster torn down)
   # Semanal (lunes 06:00 UTC) - renueva el certificado Let's Encrypt.
   # OJO: a diferencia de azure-container-apps, renovar el cert aca NO
