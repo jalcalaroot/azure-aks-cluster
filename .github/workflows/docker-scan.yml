@@ -1,0 +1,59 @@
+name: Docker Image Scan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/docker-scan.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/docker-scan.yml"
+
+permissions:
+  contents: read
+  security-events: write # requerido para subir el SARIF al tab de Security
+
+jobs:
+  scan:
+    name: Build and scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Build local, sin push a ACR - este workflow solo escanea, no reemplaza
+      # el paso manual de build+push documentado en el README.
+      - name: Build image
+        run: docker build -t hello-world:scan ./docker
+
+      # Pase 1: genera el SARIF para el tab de Security, nunca bloquea -
+      # mismo criterio que el Checkov plan-scan (ver CLAUDE.md): un fallo acá
+      # no debe tapar el resultado real, que se ve en el pase 2 de abajo.
+      - name: Trivy (report, non-blocking)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "hello-world:scan"
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload results to the GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      # Pase 2: bloqueante, pero solo CRITICAL/HIGH con fix disponible -
+      # ignore-unfixed evita romper el pipeline por CVEs de la imagen base
+      # que nada en este repo puede arreglar hoy.
+      - name: Trivy (gate on fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "hello-world:scan"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "1"
