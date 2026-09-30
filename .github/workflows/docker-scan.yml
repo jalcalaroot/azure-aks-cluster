@@ -39,6 +39,7 @@ jobs:
           image-ref: "hello-world:scan"
           format: "sarif"
           output: "trivy-results.sarif"
+          trivyignores: ".trivyignore.yaml"
 
       - name: Upload results to the GitHub Security tab
         if: always()
@@ -56,4 +57,5 @@ jobs:
           format: "table"
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true
+          trivyignores: ".trivyignore.yaml"
           exit-code: "1"
