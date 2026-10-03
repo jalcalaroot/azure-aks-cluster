@@ -122,24 +122,19 @@ resource "azurerm_role_assignment" "ci_plan_cluster_user" {
   principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
-# Backend remoto: Storage Blob Data Owner (data plane, lease de locking) +
-# Reader (management plane, para que el data source azurerm_storage_account
-# pueda leer el objeto ARM). "Storage Blob Data Contributor" NO ALCANZA -
-# su dataActions no incluye blobs/lease/action, confirmado contra la
-# definicion real del rol el 2026-10-03 cuando esto rompio
-# drift-detection.yml de jalcalaroot-azure-bootstrap con
-# AuthorizationPermissionMismatch. "Owner" si lo cubre (dataActions =
-# blobs/* via wildcard). Mismo fix en jalcalaroot-azure-bootstrap/
-# azure-virtual-network/azure-container-apps.
+# Backend remoto: Storage Blob Data Contributor (data plane, lease de
+# locking) + Reader (management plane, para que el data source
+# azurerm_storage_account pueda leer el objeto ARM) - ambos gaps reales que
+# ya pisamos ayer en azure-container-apps.
 resource "azurerm_role_assignment" "ci_agent_state_write" {
   scope                = data.azurerm_storage_account.tfstate.id
-  role_definition_name = "Storage Blob Data Owner"
+  role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_user_assigned_identity.ci_agent.principal_id
 }
 
 resource "azurerm_role_assignment" "ci_plan_state_write" {
   scope                = data.azurerm_storage_account.tfstate.id
-  role_definition_name = "Storage Blob Data Owner"
+  role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_user_assigned_identity.ci_plan.principal_id
 }
 
