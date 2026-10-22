@@ -30,6 +30,7 @@ env:
   TF_VAR_network_aks_virtual_nodes_subnet_id: ${{ vars.NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID }}
   TF_VAR_network_appgw_subnet_id: ${{ vars.NETWORK_APPGW_SUBNET_ID }}
   TF_VAR_network_log_analytics_workspace_id: ${{ vars.NETWORK_LOG_ANALYTICS_WORKSPACE_ID }}
+  TF_VAR_network_asg_aks_id: ${{ vars.NETWORK_ASG_AKS_ID }}
   ARM_USE_OIDC: true
 
 jobs:
