@@ -31,6 +31,13 @@ resource "azurerm_kubernetes_cluster" "this" {
     node_count     = var.default_node_pool_node_count
     vnet_subnet_id = var.network_aks_subnet_id
 
+    # Pertenencia al ASG asg-aks de azure-virtual-network: agrupa los nodos
+    # por rol para las reglas de nsg-aks. Hoy ninguna regla lo usa todavia
+    # (un solo node pool); se asocia para que quede listo.
+    node_network_profile {
+      application_security_group_ids = [var.network_asg_aks_id]
+    }
+
     upgrade_settings {
       max_surge = "10%"
     }

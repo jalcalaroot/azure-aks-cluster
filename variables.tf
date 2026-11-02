@@ -44,6 +44,11 @@ variable "network_aks_subnet_id" {
   type        = string
 }
 
+variable "network_asg_aks_id" {
+  description = "ID del ASG asg-aks de azure-virtual-network (output application_security_group_ids): agrupa los nodos de AKS. Hoy ninguna regla de nsg-aks lo usa todavia."
+  type        = string
+}
+
 variable "network_aks_virtual_nodes_subnet_id" {
   description = "ID del subnet snet-aks-virtual-nodes (delegado a Microsoft.ContainerInstance/containerGroups, para los pods ACI-backed)"
   type        = string

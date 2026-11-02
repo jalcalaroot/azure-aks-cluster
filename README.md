@@ -128,6 +128,6 @@ GitHub Actions, authenticated to Azure via OIDC (Workload Identity Federation) �
 | `gitleaks.yml` | PR / push to `main` | — | Secret scanning |
 | `docker-scan.yml` | PR / push to `main`, on `docker/**` changes | — | Builds the image (no push), [Trivy](https://github.com/aquasecurity/trivy) scan — reports all findings to the Security tab, blocks on fixable `CRITICAL`/`HIGH` |
 
-`aks-cluster-agent`/`aks-cluster-plan` live in their own persistent Terraform root ([`./ci`](./ci)), separate from this project's destroyable state — identities survive teardown/redeploy. Required GitHub repository variables: `ARM_CLIENT_ID_AGENT`, `ARM_CLIENT_ID_PLAN`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `OWNER`, `NETWORK_AKS_SUBNET_ID`, `NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID`, `NETWORK_APPGW_SUBNET_ID`, `NETWORK_LOG_ANALYTICS_WORKSPACE_ID`, plus the `ACME_EMAIL` secret.
+`aks-cluster-agent`/`aks-cluster-plan` live in their own persistent Terraform root ([`./ci`](./ci)), separate from this project's destroyable state — identities survive teardown/redeploy. Required GitHub repository variables: `ARM_CLIENT_ID_AGENT`, `ARM_CLIENT_ID_PLAN`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `OWNER`, `NETWORK_AKS_SUBNET_ID`, `NETWORK_AKS_VIRTUAL_NODES_SUBNET_ID`, `NETWORK_APPGW_SUBNET_ID`, `NETWORK_LOG_ANALYTICS_WORKSPACE_ID`, `NETWORK_ASG_AKS_ID`, plus the `ACME_EMAIL` secret.
 
 See [CLAUDE.md](CLAUDE.md) for design decisions, RBAC breakdown, and full project history.
