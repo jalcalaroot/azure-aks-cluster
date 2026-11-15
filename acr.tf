@@ -12,7 +12,7 @@
 module "acr" {
   #checkov:skip=CKV_TF_1: pinned por version semver del Terraform Registry (no un git tag movible) - Azure Verified Module oficial de Microsoft, versiones inmutables. Mismo criterio ya documentado en jalcalaroot-azure-bootstrap/network.tf.
   source  = "Azure/avm-res-containerregistry-registry/azurerm"
-  version = "0.8.0"
+  version = "0.9.0"
 
   name                = var.acr_name
   location            = azurerm_resource_group.this.location
